@@ -35,6 +35,9 @@ type LogRecord struct {
 	created time.Time
 	level   int
 	format  string
+
+	mFormat string
+	mArgv   []interface{}
 }
 
 type ctrlManager struct {
@@ -51,11 +54,14 @@ func (l *LogRecord) setLevel(level int) {
 	l.level = level
 }
 
-func newLogRecord(calldepth int, message string, level int) *LogRecord {
+func newLogRecord(calldepth int, level int, format string,
+	argv ...interface{}) *LogRecord {
+
 	l := new(LogRecord)
 	l.created = time.Now()
-	l.message = message
 	l.level = level
+	l.mFormat = format
+	l.mArgv = argv
 	if debug {
 		_, file, line, ok := runtime.Caller(calldepth)
 		if !ok {
@@ -75,45 +81,8 @@ func broadcast(l *LogRecord) {
 	}
 }
 
-func consoleOutput(l *LogRecord) {
-	var level, color string
-	switch l.Level() {
-	case FINEST:
-		color = _COLOR_BLACK
-		level = "N"
-	case FINE:
-		color = _COLOR_BLUE
-		level = "F"
-	case DEBUG:
-		color = _COLOR_GREEN
-		level = "D"
-	case TRACE:
-		color = _COLOR_LIGHT_BLUE
-		level = "T"
-	case INFO:
-		color = _COLOR_GRAY
-		level = "I"
-	case WARNING:
-		color = _COLOR_YELLOW
-		level = "W"
-	case ERROR:
-		color = _COLOR_RED
-		level = "E"
-	case CRITICAL:
-		color = _COLOR_PURPLE
-		level = "C"
-	}
-
-	file := l.File()
-	short := file
-	for i := len(file) - 1; i > 0; i-- {
-		if file[i] == '/' {
-			short = file[i+1:]
-			break
-		}
-	}
-
+func ConsoleOutput(l *LogRecord) {
 	fmt.Printf("%s%s [%s %s:%d] \033[0m%s",
-		color, l.Created().Format("2006-01-02 15:04:05"),
-		level, short, l.Line(), l.Message())
+		l.Color(), l.Created().Format("2006-01-02 15:04:05"),
+		l.LevelSName(), l.SFile(), l.Line(), l.Message())
 }

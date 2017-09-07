@@ -12,14 +12,14 @@ func main() {
 
 	l, err := net.Listen("tcp", ":18081")
 	if err != nil {
-		logger.Log(logger.ERROR, err)
+		logger.Error(err)
 		return
 	}
 
 	for {
 		client, err := l.Accept()
 		if err != nil {
-			logger.Log(logger.ERROR, err)
+			logger.Error(err)
 			return
 		}
 
@@ -28,7 +28,7 @@ func main() {
 
 			defer func() {
 				if err := recover(); err != nil {
-					logger.Log(logger.ERROR, err)
+					logger.Error(err)
 				}
 
 				if handler != nil {

@@ -36,13 +36,13 @@ func NewTCPHandler(conn net.Conn) *TCPHandler {
 func (handler *TCPHandler) Run() {
 	err := handler.stageInit()
 	if err != nil {
-		logger.Log(logger.ERROR, err)
+		logger.Error(err)
 		return
 	}
 
 	err = handler.stageAddr()
 	if err != nil {
-		logger.Log(logger.ERROR, err)
+		logger.Error(err)
 		return
 	}
 
