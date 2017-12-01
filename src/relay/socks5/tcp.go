@@ -1,4 +1,4 @@
-package relay
+package socks5
 
 import (
 	"errors"

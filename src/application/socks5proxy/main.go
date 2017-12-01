@@ -1,12 +1,12 @@
-package main
+package socks5proxy
 
 import (
 	"logger"
 	"net"
-	"relay"
+	"relay/socks5"
 )
 
-func main() {
+func Main() {
 	logger.Init()
 	logger.AddLogger("default", nil)
 
@@ -24,7 +24,7 @@ func main() {
 		}
 
 		go func() {
-			var handler *relay.TCPHandler = nil
+			var handler *socks5.TCPHandler = nil
 
 			defer func() {
 				if err := recover(); err != nil {
@@ -36,7 +36,7 @@ func main() {
 				}
 			}()
 
-			handler = relay.NewTCPHandler(client)
+			handler = socks5.NewTCPHandler(client)
 			if handler == nil {
 				return
 			}
