@@ -83,7 +83,7 @@ func (l *LogRecord) LevelSName() string {
 	return _SHORT_LEVEL_NAME[l.level]
 }
 
-func Init() {
+func init() {
 	if cm == nil {
 		cm = &ctrlManager{
 			logChannels: make(map[string]chan *LogRecord),

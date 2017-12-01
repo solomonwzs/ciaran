@@ -7,7 +7,6 @@ import (
 )
 
 func Main() {
-	logger.Init()
 	logger.AddLogger("default", nil)
 
 	l, err := net.Listen("tcp", ":18081")

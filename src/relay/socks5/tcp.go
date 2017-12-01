@@ -1,127 +1,155 @@
 package socks5
 
 import (
-	"errors"
 	"io"
 	"logger"
 	"net"
 	"strconv"
 )
 
-const (
-	CMD_CONNECT       = 0x01
-	CMD_BIND          = 0x02
-	CMD_UDP_ASSOCIATE = 0x03
+var (
+	_REPLY_NO_AUTH   = []byte{PROTO_VER, PROTO_METHOD_NOAUTH}
+	_REPLY_NO_ACCEPT = []byte{PROTO_VER, PROTO_METHOD_NOT_ACCEPTABLE}
 
-	ATYPE_IPV4       = 0x01
-	ATYPE_DOMAINNAME = 0x03
-	ATYPE_IPV6       = 0x04
+	_REPLY_GEN_SOCKS_SERVER_FAILURE = []byte{
+		PROTO_VER,
+		REP_GEN_SOCKS_SERVER_FAILURE,
+		0x00,
+		ATYP_IPV4,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00,
+	}
+	_REPLY_GEN_SOCKS_SERVER_SUCCESS = []byte{
+		PROTO_VER,
+		REP_SUCCESS,
+		0x00,
+		ATYP_IPV4,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00,
+	}
 )
 
 type TCPHandler struct {
-	buffer []byte
 	conn   net.Conn
 	server net.Conn
 }
 
 func NewTCPHandler(conn net.Conn) *TCPHandler {
 	handler := TCPHandler{
-		buffer: make([]byte, 2048),
 		conn:   conn,
 		server: nil,
 	}
 	return &handler
 }
 
-func (handler *TCPHandler) Run() {
-	err := handler.stageInit()
-	if err != nil {
+func (h *TCPHandler) Run() {
+	if err := h.stageMethodNegotiation(); err != nil {
 		logger.Error(err)
 		return
 	}
 
-	err = handler.stageAddr()
-	if err != nil {
+	if err := h.stageAddr(); err != nil {
 		logger.Error(err)
 		return
 	}
 
-	handler.stageTransport()
+	h.stageTransport()
 }
 
-func (handler *TCPHandler) Close() {
-	if handler.conn != nil {
-		handler.conn.Close()
+func (h *TCPHandler) Close() {
+	if h.conn != nil {
+		h.conn.Close()
 	}
-	if handler.server != nil {
-		handler.server.Close()
+	if h.server != nil {
+		h.server.Close()
 	}
 }
 
-func (handler *TCPHandler) stageInit() (err error) {
-	buf := handler.buffer
-	_, err = handler.conn.Read(buf[:])
-	if err != nil {
+func (h *TCPHandler) stageMethodNegotiation() (err error) {
+	buf := make([]byte, 0xff, 0xff)
+	if _, err = io.ReadFull(h.conn, buf[:2]); err != nil {
 		return
 	}
 
-	ver := buf[0]
-	if ver != 0x05 {
-		return errors.New("version error")
+	ver, nMethods := buf[0], buf[1]
+	if ver != PROTO_VER {
+		return ErrVersion
 	}
 
-	nMethods := int(buf[1])
-	for i := 0; i < nMethods; i++ {
-		if buf[i+2] == 0x00 {
-			_, err = handler.conn.Write([]byte{0x05, 0x00})
+	if _, err = io.ReadFull(h.conn, buf[:nMethods]); err != nil {
+		return
+	}
+	for i := byte(0); i < nMethods; i++ {
+		if buf[i] == PROTO_METHOD_NOAUTH {
+			_, err = h.conn.Write(_REPLY_NO_AUTH)
 			return
 		}
 	}
 
-	handler.conn.Write([]byte{0x05, 0xff})
-	return errors.New("identifier method error")
-}
-
-func (handler *TCPHandler) stageAddr() (err error) {
-	var n int
-	b := handler.buffer
-	n, err = handler.conn.Read(b[:])
-	if err != nil {
-		return
-	}
-
-	ver := b[0]
-	if ver != 0x05 {
-		return errors.New("version error")
-	}
-
-	cmd := b[1]
-	if cmd == CMD_CONNECT {
-		var host, port string
-
-		switch b[3] {
-		case ATYPE_IPV4:
-			host = net.IPv4(b[4], b[5], b[6], b[7]).String()
-		case ATYPE_DOMAINNAME:
-			host = string(b[5 : n-2])
-		case ATYPE_IPV6:
-			host = net.IP{b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11],
-				b[12], b[13], b[14], b[15], b[16], b[17], b[18], b[19]}.String()
-		default:
-			return errors.New("unknown atype")
-		}
-		port = strconv.Itoa(int(b[n-2])<<8 | int(b[n-1]))
-
-		handler.server, err = net.Dial("tcp", net.JoinHostPort(host, port))
-		if err != nil {
-			return
-		}
-
-		_, err = handler.conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00})
+	if _, err = h.conn.Write(_REPLY_NO_ACCEPT); err != nil {
 		return
 	} else {
-		return errors.New("unknown command")
+		return ErrMethodNotAcceptable
+	}
+}
+
+func (h *TCPHandler) stageAddr() (err error) {
+	var (
+		buf  = make([]byte, 0xff, 0xff)
+		host string
+		port string
+	)
+
+	if _, err = io.ReadFull(h.conn, buf[:4]); err != nil {
+		return
+	}
+
+	ver, cmd, atyp := buf[0], buf[1], buf[3]
+	if ver != PROTO_VER {
+		return ErrVersion
+	}
+
+	if cmd == CMD_CONNECT {
+		switch atyp {
+		case ATYP_IPV4:
+			if _, err = io.ReadFull(h.conn, buf[:4]); err != nil {
+				return
+			}
+			host = net.IPv4(buf[0], buf[1], buf[2], buf[3]).String()
+		case ATYP_DOMAINNAME:
+			if _, err = io.ReadFull(h.conn, buf[:1]); err != nil {
+				return
+			}
+			domainLen := buf[0]
+
+			if _, err = io.ReadFull(h.conn, buf[:domainLen]); err != nil {
+				return
+			}
+			host = string(buf[:domainLen])
+		case ATYP_IPV6:
+			if _, err = io.ReadFull(h.conn, buf[:16]); err != nil {
+				return
+			}
+			host = net.IP(buf[:16]).String()
+		default:
+			return ErrUnknownAddrType
+		}
+
+		if _, err = io.ReadFull(h.conn, buf[:2]); err != nil {
+			return
+		}
+		port = strconv.Itoa(int(buf[0])<<8 | int(buf[1]))
+
+		if h.server, err = net.Dial(
+			"tcp", net.JoinHostPort(host, port)); err != nil {
+			h.conn.Write(_REPLY_GEN_SOCKS_SERVER_FAILURE)
+			return
+		}
+
+		_, err = h.conn.Write(_REPLY_GEN_SOCKS_SERVER_SUCCESS)
+		return
+	} else {
+		return ErrUnknownCommand
 	}
 }
 
