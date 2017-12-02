@@ -4,9 +4,15 @@
     "//": "slaver: private network server",
     "role": "master",
 
+    "//": "server name",
+    "name": "master-server",
+
     "//": "http api, to manage master/slaver servers",
     "client_addr": "127.0.0.1:18082",
 
     "//": "send/receive control commands between master and slaver",
-    "ctrl_addr": ":18083"
+    "ctrl_addr": ":18083",
+
+    "//": "master addr to build the tunnel",
+    "tunnel_addr": ":18084"
 }
