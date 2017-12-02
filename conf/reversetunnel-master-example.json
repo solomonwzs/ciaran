@@ -1,12 +1,12 @@
 {
-    "#": "server role, master or slaver",
-    "#": "master: public network server",
-    "#": "slaver: private network server",
+    "//": "server role, master or slaver",
+    "//": "master: public network server",
+    "//": "slaver: private network server",
     "role": "master",
 
-    "#": "http api, to manage master/slaver servers",
+    "//": "http api, to manage master/slaver servers",
     "client_addr": "127.0.0.1:18082",
 
-    "#": "listen slaver servers join",
-    "cluster_addr": "127.0.0.1:18083"
+    "//": "send/receive control commands between master and slaver",
+    "ctrl_addr": ":18083"
 }
