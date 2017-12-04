@@ -11,6 +11,8 @@ const (
 	CMD_V1_JOIN_ACK         = 0x01 // master response of slaver join request
 	CMD_V1_BUILD_TUNNEL     = 0x02 // master ask for build tunnel
 	CMD_V1_BUILD_TUNNEL_ACK = 0x03 // slaver response of build tunnel request
+	CMD_V1_HEARTBEAT        = 0x04 // check server alive
+	CMD_V1_UNKNOWN          = 0xff
 )
 
 // The slaver connects to master, and sends a join message:
@@ -31,12 +33,21 @@ const (
 
 // o REP
 //   o X'00' succeeds
-//   o X'01' failure
+//   o X'01' duplicate slaver name error
 
 const (
-	REP_SUCCEEDS = 0x00
-	REP_FAILURE  = 0x01
+	REP_SUCCEEDS            = 0x00
+	REP_ERR_DUP_SLAVER_NAME = 0x01
 )
+
+// After connected, slaver sends heartbeat to master,
+// master ensure slaver alive by heartbeat
+
+// +-----+-------+
+// | VER |  CMD  |
+// +-----+-------+
+// |  1  | X'04' |
+// +-----+-------+
 
 // The master send command to slaver to build tunnel,
 // The master listen the M.ADDR:M.PORT
