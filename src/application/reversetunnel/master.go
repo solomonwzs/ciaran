@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-	"web"
 )
 
 const (
@@ -71,7 +70,7 @@ func (s *slaverServer) serve() {
 }
 
 type masterServer struct {
-	client      *web.BasicServer
+	client      net.Listener
 	ctrl        net.Listener
 	tunnel      net.Listener
 	slavers     map[string]*slaverServer
@@ -79,15 +78,11 @@ type masterServer struct {
 	ch          chan int
 }
 
-func dispath(path, method string) (f web.ServeFunc, err error) {
-	return func(w http.ResponseWriter, r *http.Request) int {
-		w.Write([]byte("server running"))
-		return http.StatusOK
-	}, nil
-}
-
 func newMasterServer(conf *config) *masterServer {
-	client := web.NewBasicServer(dispath, conf.ClientAddr)
+	clientListener, err := net.Listen("tcp", conf.ClientAddr)
+	if err != nil {
+		panic(err)
+	}
 
 	ctrlListener, err := net.Listen("tcp", conf.CtrlAddr)
 	if err != nil {
@@ -100,7 +95,7 @@ func newMasterServer(conf *config) *masterServer {
 	}
 
 	return &masterServer{
-		client:  client,
+		client:  clientListener,
 		ctrl:    ctrlListener,
 		tunnel:  tunnelListener,
 		slavers: map[string]*slaverServer{},
@@ -108,7 +103,9 @@ func newMasterServer(conf *config) *masterServer {
 }
 
 func (m *masterServer) run() {
-	go m.client.Run()
+	go http.Serve(m.client, m)
+	for {
+	}
 }
 
 func (m *masterServer) listenSlaverJoin() {

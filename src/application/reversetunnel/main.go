@@ -28,7 +28,8 @@ func Main() {
 	}
 
 	if conf.Role == "master" {
-		newMasterServer(conf)
+		m := newMasterServer(conf)
+		m.run()
 	} else {
 		panic(fmt.Sprintf("unknown role %s", conf.Role))
 	}
