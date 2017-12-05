@@ -3,6 +3,6 @@ package reversetunnel
 import "errors"
 
 var (
-	ErrDupicateSlaverName = errors.New("master: duplicate slaver name")
-	ErrCommand            = errors.New("master: command error")
+	ErrDupicateSlaverName = errors.New("duplicate slaver name")
+	ErrCommand            = errors.New("command error")
 )

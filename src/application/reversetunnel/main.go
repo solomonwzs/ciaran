@@ -30,10 +30,10 @@ func Main() {
 	if conf.Role == "master" {
 		m := newMasterServer(conf)
 		m.run()
+	} else if conf.Role == "slaver" {
+		s := newSlaverServer(conf)
+		s.run()
 	} else {
 		panic(fmt.Sprintf("unknown role %s", conf.Role))
 	}
-
-	// fmt.Println([]byte(net.ParseIP("fe80::ba97:5aff:fe9e:4abf")))
-	// fmt.Println([]byte(net.ParseIP("10.0.0.128")))
 }

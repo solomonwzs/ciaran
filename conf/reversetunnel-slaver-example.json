@@ -1,0 +1,12 @@
+{
+    "//": "server role, master or slaver",
+    "//": "master: public network server",
+    "//": "slaver: private network server",
+    "role": "slaver",
+
+    "//": "server name",
+    "name": "slaver-0",
+
+    "//": "master address",
+    "join": "127.0.0.1:18083"
+}

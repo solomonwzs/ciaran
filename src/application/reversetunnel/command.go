@@ -34,3 +34,12 @@ func parseJoinV1(r io.Reader) (name string, err error) {
 
 	return string(buf[:nameLen]), nil
 }
+
+func parseJoinAckV1(r io.Reader) (rep byte, err error) {
+	buf := make([]byte, 1)
+
+	if _, err = io.ReadFull(r, buf); err != nil {
+		return
+	}
+	return buf[0], nil
+}
