@@ -21,6 +21,9 @@ var (
 		cmd:  CMD_V1_UNKNOWN,
 		data: nil,
 	}
+
+	_HEARTBEAT_DURATION = 2 * time.Second
+	_NETWORK_TIMEOUT    = 4 * time.Second
 )
 
 type commandEvent struct {
@@ -34,43 +37,55 @@ type slaverAgent struct {
 	ch chan *commandEvent
 }
 
-type rProxyTunnel struct {
+type mProxyTunnel struct {
 	rEnd net.Conn
 	lEnd net.Conn
 	id   uint64
 }
 
-func (s *slaverAgent) serve() {
-	go func() {
-		for {
-			s.SetReadDeadline(time.Now().Add(10 * time.Second))
+func (s *slaverAgent) recvHeartbeat() {
+	for {
+		s.SetReadDeadline(time.Now().Add(_NETWORK_TIMEOUT))
 
-			if cmd, err := parseCommandV1(s); err != nil {
-				logger.Error(err)
-				s.ch <- _ErrorCommandEvent
-				break
-			} else if cmd == CMD_V1_HEARTBEAT {
-				continue
-			} else {
-				s.ch <- _ErrorCommandEvent
-				break
-			}
+		if cmd, err := parseCommandV1(s); err != nil {
+			logger.Error(err)
+			s.ch <- _ErrorCommandEvent
+			break
+		} else if cmd == CMD_V1_HEARTBEAT {
+			continue
+		} else {
+			s.ch <- _ErrorCommandEvent
+			break
 		}
-	}()
+	}
+}
 
+func (s *slaverAgent) serve() {
+	go s.recvHeartbeat()
+	for e := range s.ch {
+		if e.typ == _COMMAND_ERROR {
+			return
+		} else if e.typ == _COMMAND_OUT {
+			s.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
+			if _, err := s.Write(e.data); err != nil {
+				logger.Error(err)
+				return
+			}
+			s.SetWriteDeadline(time.Time{})
+		}
+	}
+}
+
+func (s *slaverAgent) close() {
+	s.Close()
+
+	end := time.After(_NETWORK_TIMEOUT)
 	for {
 		select {
-		case e := <-s.ch:
-			if e.typ == _COMMAND_ERROR {
-				return
-			} else if e.typ == _COMMAND_OUT {
-				s.SetWriteDeadline(time.Now().Add(10 * time.Second))
-				if _, err := s.Write(e.data); err != nil {
-					logger.Error(err)
-					return
-				}
-				s.SetWriteDeadline(time.Time{})
-			}
+		case <-s.ch:
+			break
+		case <-end:
+			return
 		}
 	}
 }
@@ -85,7 +100,7 @@ type masterServer struct {
 	tunnelAType byte
 
 	slavers     map[string]*slaverAgent
-	slaversLock sync.Mutex
+	slaversLock sync.RWMutex
 
 	name string
 	ch   chan int
@@ -134,7 +149,7 @@ func newMasterServer(conf *config) *masterServer {
 
 	m.slavers = map[string]*slaverAgent{}
 	m.name = conf.Name
-	m.ch = make(chan int)
+	m.ch = make(chan int, 10)
 
 	return m
 }
@@ -163,7 +178,7 @@ func (m *masterServer) listenSlaverJoin() {
 }
 
 func (m *masterServer) newSlaver(conn net.Conn) (err error) {
-	conn.SetDeadline(time.Now().Add(10 * time.Second))
+	conn.SetDeadline(time.Now().Add(_NETWORK_TIMEOUT))
 	defer conn.SetDeadline(time.Time{})
 
 	var cmd byte
@@ -206,7 +221,7 @@ func (m *masterServer) newSlaver(conn net.Conn) (err error) {
 			delete(m.slavers, name)
 			m.slaversLock.Unlock()
 
-			s.Close()
+			s.close()
 		}()
 	}
 	return
