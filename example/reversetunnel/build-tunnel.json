@@ -1,0 +1,10 @@
+{
+    "//": "master address, which client would connect",
+    "m_addr": "127.0.0.1:3800",
+
+    "//": "slaver address, which client want to connect",
+    "s_addr": "127.0.0.1:3801",
+
+    "//": "slaver name",
+    "s_name": "slaver-0"
+}

@@ -33,21 +33,25 @@ type commandEvent struct {
 }
 
 type slaverAgent struct {
-	net.Conn
-	ch chan *commandEvent
+	ctrl        net.Conn
+	ch          chan *commandEvent
+	pTunnelList []*mProxyTunnel
 }
 
 type mProxyTunnel struct {
-	rEnd net.Conn
-	lEnd net.Conn
-	id   uint64
+	clientListener net.Listener
+	sAddr          string
+}
+
+func (pt *mProxyTunnel) close() {
+	pt.clientListener.Close()
 }
 
 func (s *slaverAgent) recvHeartbeat() {
 	for {
-		s.SetReadDeadline(time.Now().Add(_NETWORK_TIMEOUT))
+		s.ctrl.SetReadDeadline(time.Now().Add(_NETWORK_TIMEOUT))
 
-		if cmd, err := parseCommandV1(s); err != nil {
+		if cmd, err := parseCommandV1(s.ctrl); err != nil {
 			logger.Error(err)
 			s.ch <- _ErrorCommandEvent
 			break
@@ -66,18 +70,22 @@ func (s *slaverAgent) serve() {
 		if e.typ == _COMMAND_ERROR {
 			return
 		} else if e.typ == _COMMAND_OUT {
-			s.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
-			if _, err := s.Write(e.data); err != nil {
+			s.ctrl.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
+			if _, err := s.ctrl.Write(e.data); err != nil {
 				logger.Error(err)
 				return
 			}
-			s.SetWriteDeadline(time.Time{})
+			s.ctrl.SetWriteDeadline(time.Time{})
 		}
 	}
 }
 
 func (s *slaverAgent) close() {
-	s.Close()
+	s.ctrl.Close()
+
+	for _, pTunnel := range s.pTunnelList {
+		pTunnel.close()
+	}
 
 	end := time.After(_NETWORK_TIMEOUT)
 	for {
@@ -205,8 +213,9 @@ func (m *masterServer) newSlaver(conn net.Conn) (err error) {
 		}
 
 		s := &slaverAgent{
-			Conn: conn,
-			ch:   make(chan *commandEvent),
+			ctrl:        conn,
+			ch:          make(chan *commandEvent),
+			pTunnelList: []*mProxyTunnel{},
 		}
 		m.slaversLock.Lock()
 		m.slavers[name] = s
@@ -224,5 +233,31 @@ func (m *masterServer) newSlaver(conn net.Conn) (err error) {
 			s.close()
 		}()
 	}
+	return
+}
+
+func (m *masterServer) buildTunnel(req *buildTunnelReq) (err error) {
+	m.slaversLock.RLock()
+	defer m.slaversLock.RUnlock()
+
+	var (
+		sa    *slaverAgent
+		exist bool
+	)
+
+	if sa, exist = m.slavers[req.SlaverName]; !exist {
+		return ErrSlaverNotExist
+	}
+
+	pTunnel := &mProxyTunnel{
+		sAddr: req.SAddr,
+	}
+	if pTunnel.clientListener, err = net.Listen(
+		"tcp", req.MAddr); err != nil {
+		return
+	}
+
+	sa.pTunnelList = append(sa.pTunnelList, pTunnel)
+
 	return
 }

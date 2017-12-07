@@ -21,7 +21,7 @@ type slaverServer struct {
 type sProxyTunnel struct {
 	rEnd       net.Conn
 	lEnd       net.Conn
-	id         uint64
+	id         uint32
 	targetPort string
 }
 
