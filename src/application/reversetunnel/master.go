@@ -24,7 +24,18 @@ var (
 
 	_HEARTBEAT_DURATION = 2 * time.Second
 	_NETWORK_TIMEOUT    = 4 * time.Second
+
+	_TID      = uint32(time.Now().Unix())
+	_TID_LOCK = sync.Mutex{}
 )
+
+func newTid() uint32 {
+	_TID_LOCK.Lock()
+	defer _TID_LOCK.Unlock()
+
+	_TID += 1
+	return _TID
+}
 
 type commandEvent struct {
 	typ  byte
@@ -32,19 +43,42 @@ type commandEvent struct {
 	data []byte
 }
 
-type slaverAgent struct {
-	ctrl        net.Conn
-	ch          chan *commandEvent
-	pTunnelList []*mProxyTunnel
+type mProxyTunnelConn struct {
+	mConn net.Conn
+	sConn net.Conn
+	id    uint32
 }
 
 type mProxyTunnel struct {
 	clientListener net.Listener
+	ch             chan *mProxyTunnelConn
 	sAddr          string
+}
+
+func (pt *mProxyTunnel) serv() {
+	for {
+		if conn, err := pt.clientListener.Accept(); err != nil {
+			return
+		} else {
+			mc := &mProxyTunnelConn{
+				mConn: conn,
+			}
+			pt.ch <- mc
+		}
+	}
 }
 
 func (pt *mProxyTunnel) close() {
 	pt.clientListener.Close()
+}
+
+type slaverAgent struct {
+	ctrl        net.Conn
+	ch          chan *commandEvent
+	pTunnelList []*mProxyTunnel
+
+	pCh         chan *mProxyTunnelConn
+	standByConn map[uint32]*mProxyTunnelConn
 }
 
 func (s *slaverAgent) recvHeartbeat() {
