@@ -1,6 +1,7 @@
 package reversetunnel
 
 import (
+	"fmt"
 	"logger"
 	"net"
 	"net/http"
@@ -24,112 +25,18 @@ var (
 
 	_HEARTBEAT_DURATION = 2 * time.Second
 	_NETWORK_TIMEOUT    = 4 * time.Second
-
-	_TID      = uint32(time.Now().Unix())
-	_TID_LOCK = sync.Mutex{}
 )
 
-func newTid() uint32 {
-	_TID_LOCK.Lock()
-	defer _TID_LOCK.Unlock()
-
-	_TID += 1
-	return _TID
+type address struct {
+	ip    []byte
+	port  [2]byte
+	atype byte
 }
 
 type commandEvent struct {
 	typ  byte
 	cmd  byte
-	data []byte
-}
-
-type mProxyTunnelConn struct {
-	mConn net.Conn
-	sConn net.Conn
-	id    uint32
-}
-
-type mProxyTunnel struct {
-	clientListener net.Listener
-	ch             chan *mProxyTunnelConn
-	sAddr          string
-}
-
-func (pt *mProxyTunnel) serv() {
-	for {
-		if conn, err := pt.clientListener.Accept(); err != nil {
-			return
-		} else {
-			mc := &mProxyTunnelConn{
-				mConn: conn,
-			}
-			pt.ch <- mc
-		}
-	}
-}
-
-func (pt *mProxyTunnel) close() {
-	pt.clientListener.Close()
-}
-
-type slaverAgent struct {
-	ctrl        net.Conn
-	ch          chan *commandEvent
-	pTunnelList []*mProxyTunnel
-
-	pCh         chan *mProxyTunnelConn
-	standByConn map[uint32]*mProxyTunnelConn
-}
-
-func (s *slaverAgent) recvHeartbeat() {
-	for {
-		s.ctrl.SetReadDeadline(time.Now().Add(_NETWORK_TIMEOUT))
-
-		if cmd, err := parseCommandV1(s.ctrl); err != nil {
-			logger.Error(err)
-			s.ch <- _ErrorCommandEvent
-			break
-		} else if cmd == CMD_V1_HEARTBEAT {
-			continue
-		} else {
-			s.ch <- _ErrorCommandEvent
-			break
-		}
-	}
-}
-
-func (s *slaverAgent) serve() {
-	go s.recvHeartbeat()
-	for e := range s.ch {
-		if e.typ == _COMMAND_ERROR {
-			return
-		} else if e.typ == _COMMAND_OUT {
-			s.ctrl.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
-			if _, err := s.ctrl.Write(e.data); err != nil {
-				logger.Error(err)
-				return
-			}
-			s.ctrl.SetWriteDeadline(time.Time{})
-		}
-	}
-}
-
-func (s *slaverAgent) close() {
-	s.ctrl.Close()
-
-	for _, pTunnel := range s.pTunnelList {
-		pTunnel.close()
-	}
-
-	end := time.After(_NETWORK_TIMEOUT)
-	for {
-		select {
-		case <-s.ch:
-			break
-		case <-end:
-			return
-		}
-	}
+	data interface{}
 }
 
 type masterServer struct {
@@ -137,39 +44,48 @@ type masterServer struct {
 	ctrl   net.Listener
 	tunnel net.Listener
 
-	tunnelHost  []byte
-	tunnelPort  [2]byte
-	tunnelAType byte
+	tunnelAddr *address
 
 	slavers     map[string]*slaverAgent
 	slaversLock sync.RWMutex
 
 	name string
-	ch   chan int
+	ch   chan interface{}
+}
+
+func parseAddr(s string) (addr *address) {
+	host, port, err := net.SplitHostPort(s)
+	if err != nil {
+		return nil
+	}
+
+	ip := net.ParseIP(host)
+	addr = &address{}
+	for i := 0; i < len(host); i++ {
+		if host[i] == '.' {
+			addr.atype = ATYP_IPV4
+			addr.ip = ip[net.IPv6len-net.IPv4len:]
+			break
+		} else if host[i] == ':' {
+			addr.atype = ATYP_IPV6
+			addr.ip = ip
+			break
+		}
+	}
+	p, _ := strconv.Atoi(port)
+	addr.port[0] = byte(p >> 8 & 0xff)
+	addr.port[1] = byte(p & 0xff)
+
+	return
 }
 
 func newMasterServer(conf *config) *masterServer {
 	m := new(masterServer)
 
-	host, port, err := net.SplitHostPort(conf.TunnelAddr)
-	if err != nil {
-		panic(err)
+	m.tunnelAddr = parseAddr(conf.TunnelAddr)
+	if m.tunnelAddr == nil {
+		panic(fmt.Sprintf("error: tunnel addr: %s", conf.TunnelAddr))
 	}
-	ip := net.ParseIP(host)
-	for i := 0; i < len(host); i++ {
-		if host[i] == '.' {
-			m.tunnelAType = ATYP_IPV4
-			m.tunnelHost = ip[net.IPv6len-net.IPv4len:]
-			break
-		} else if host[i] == ':' {
-			m.tunnelAType = ATYP_IPV6
-			m.tunnelHost = ip
-			break
-		}
-	}
-	p, _ := strconv.Atoi(port)
-	m.tunnelPort[0] = byte(p >> 8 & 0xff)
-	m.tunnelPort[1] = byte(p & 0xff)
 
 	clientListener, err := net.Listen("tcp", conf.ClientAddr)
 	if err != nil {
@@ -191,15 +107,21 @@ func newMasterServer(conf *config) *masterServer {
 
 	m.slavers = map[string]*slaverAgent{}
 	m.name = conf.Name
-	m.ch = make(chan int, 10)
+	m.ch = make(chan interface{}, 100)
 
 	return m
 }
 
 func (m *masterServer) run() {
 	go http.Serve(m.client, m)
+	go m.listenSlaverJoin()
 
-	m.listenSlaverJoin()
+	for e := range m.ch {
+		switch e.(type) {
+		case *buildTunnelReq:
+			m.buildTunnel(e.(*buildTunnelReq))
+		}
+	}
 }
 
 func (m *masterServer) listenSlaverJoin() {
@@ -246,11 +168,7 @@ func (m *masterServer) newSlaver(conn net.Conn) (err error) {
 			return
 		}
 
-		s := &slaverAgent{
-			ctrl:        conn,
-			ch:          make(chan *commandEvent),
-			pTunnelList: []*mProxyTunnel{},
-		}
+		s := newSlaver(conn, m.tunnelAddr)
 		m.slaversLock.Lock()
 		m.slavers[name] = s
 		m.slaversLock.Unlock()
@@ -282,16 +200,7 @@ func (m *masterServer) buildTunnel(req *buildTunnelReq) (err error) {
 	if sa, exist = m.slavers[req.SlaverName]; !exist {
 		return ErrSlaverNotExist
 	}
-
-	pTunnel := &mProxyTunnel{
-		sAddr: req.SAddr,
-	}
-	if pTunnel.clientListener, err = net.Listen(
-		"tcp", req.MAddr); err != nil {
-		return
-	}
-
-	sa.pTunnelList = append(sa.pTunnelList, pTunnel)
+	sa.ch <- req
 
 	return
 }
