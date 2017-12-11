@@ -1,7 +1,7 @@
 package reversetunnel
 
 import (
-	"bytes"
+	"logger"
 	"net"
 	"time"
 )
@@ -9,18 +9,20 @@ import (
 type slaverAgent struct {
 	tunnelAddr  *address
 	ctrl        net.Conn
-	ch          chan interface{}
+	ch          chan *channelEvent
 	pTunnels    map[string]*mProxyTunnel
-	standByConn map[tunnelID]*mProxyTunnelConn
+	standByConn map[uint64]*mProxyTunnelConn
 }
+
+const ()
 
 func newSlaver(conn net.Conn, tunnelAddr *address) *slaverAgent {
 	return &slaverAgent{
 		tunnelAddr:  tunnelAddr,
 		ctrl:        conn,
-		ch:          make(chan interface{}, 10),
+		ch:          make(chan *channelEvent, 10),
 		pTunnels:    map[string]*mProxyTunnel{},
-		standByConn: map[tunnelID]*mProxyTunnelConn{},
+		standByConn: map[uint64]*mProxyTunnelConn{},
 	}
 }
 
@@ -29,12 +31,12 @@ func (s *slaverAgent) recvHeartbeat() {
 		s.ctrl.SetReadDeadline(time.Now().Add(_NETWORK_TIMEOUT))
 
 		if cmd, err := parseCommandV1(s.ctrl); err != nil {
-			s.ch <- err
+			s.ch <- &channelEvent{_EVENT_SA_ERROR, err}
 			break
 		} else if cmd == CMD_V1_HEARTBEAT {
 			continue
 		} else {
-			s.ch <- ErrCommand
+			s.ch <- &channelEvent{_EVENT_SA_ERROR, ErrCommand}
 			break
 		}
 	}
@@ -43,18 +45,17 @@ func (s *slaverAgent) recvHeartbeat() {
 func (s *slaverAgent) serve() {
 	go s.recvHeartbeat()
 	for e := range s.ch {
-		switch e.(type) {
-		case error:
+		switch e.typ {
+		case _EVENT_SA_ERROR:
 			return
-		case *buildTunnelReq:
-			req := e.(*buildTunnelReq)
+		case _EVENT_SA_BUILD_TUNNEL_REQ:
+			req := e.data.(*buildTunnelReq)
 			s.newProxyTunnel(req)
-		case tunnelID:
-			buf := new(bytes.Buffer)
-			buf.Write([]byte{PROTO_VER, CMD_V1_BUILD_TUNNEL,
-				s.tunnelAddr.atype})
-			buf.Write(s.tunnelAddr.ip)
-			buf.Write(s.tunnelAddr.port[:])
+		case _EVENT_SA_SEND_DATA:
+			s.ctrl.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
+			if _, err := s.ctrl.Write(e.data.([]byte)); err != nil {
+				logger.Error(err)
+			}
 		}
 	}
 }
@@ -64,7 +65,7 @@ func (s *slaverAgent) newProxyTunnel(req *buildTunnelReq) {
 	if sAddr == nil {
 		return
 	}
-	pTunnel, err := newMProxyTunnel(s.tunnelAddr, sAddr, req.MAddr)
+	pTunnel, err := newMProxyTunnel(s.tunnelAddr, sAddr, req.MAddr, s.ch)
 	if err != nil {
 		return
 	}

@@ -15,7 +15,7 @@ type slaverServer struct {
 	ctrl       net.Conn
 	masterAddr string
 	name       string
-	ch         chan *commandEvent
+	ch         chan *channelEvent
 }
 
 type sProxyTunnel struct {
@@ -29,7 +29,7 @@ func newSlaverServer(conf *config) *slaverServer {
 	s := new(slaverServer)
 	s.masterAddr = conf.JoinAddr
 	s.name = conf.Name
-	s.ch = make(chan *commandEvent, 10)
+	s.ch = make(chan *channelEvent, 10)
 	return s
 }
 
@@ -38,7 +38,7 @@ func (s *slaverServer) sendHeartbeat() {
 	for {
 		s.ctrl.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
 		if _, err = s.ctrl.Write(_BYTES_V1_HEARTBEAT); err != nil {
-			s.ch <- _ErrorCommandEvent
+			s.ch <- &channelEvent{_EVENT_S_ERROR, err}
 			return
 		}
 		time.Sleep(_HEARTBEAT_DURATION)
@@ -105,14 +105,9 @@ func (s *slaverServer) joinMaster() (err error) {
 func (s *slaverServer) recvCommand() {
 	for {
 		s.ctrl.SetReadDeadline(time.Time{})
-		if cmd, err := parseCommandV1(s.ctrl); err != nil {
-			s.ch <- &commandEvent{
-				typ:  _COMMAND_IN,
-				cmd:  cmd,
-				data: nil,
-			}
+		if _, err := parseCommandV1(s.ctrl); err != nil {
+			s.ch <- &channelEvent{_EVENT_S_ERROR, err}
 		} else {
-			s.ch <- _ErrorCommandEvent
 		}
 	}
 }
@@ -125,7 +120,8 @@ func (s *slaverServer) serve() {
 	go s.sendHeartbeat()
 	go s.recvCommand()
 	for e := range s.ch {
-		if e.typ == _COMMAND_ERROR {
+		if e.typ == _EVENT_S_ERROR {
+			logger.Error(e.data.(error))
 			return
 		}
 	}

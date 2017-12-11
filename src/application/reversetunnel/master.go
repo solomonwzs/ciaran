@@ -11,21 +11,25 @@ import (
 )
 
 const (
-	_COMMAND_IN    = 0x00
-	_COMMAND_OUT   = 0x01
-	_COMMAND_ERROR = 0x02
+	_EVENT_SA_EVENT = iota
+	_EVENT_SA_ERROR
+	_EVENT_SA_BUILD_TUNNEL_REQ
+	_EVENT_SA_SEND_DATA
+
+	_EVENT_S_ERROR
+
+	_EVENT_M_BUILD_TUNNEL_REQ
 )
 
 var (
-	_ErrorCommandEvent = &commandEvent{
-		typ:  _COMMAND_ERROR,
-		cmd:  CMD_V1_UNKNOWN,
-		data: nil,
-	}
-
 	_HEARTBEAT_DURATION = 2 * time.Second
 	_NETWORK_TIMEOUT    = 4 * time.Second
 )
+
+type channelEvent struct {
+	typ  uint8
+	data interface{}
+}
 
 type address struct {
 	ip    []byte
@@ -50,7 +54,7 @@ type masterServer struct {
 	slaversLock sync.RWMutex
 
 	name string
-	ch   chan interface{}
+	ch   chan *channelEvent
 }
 
 func parseAddr(s string) (addr *address) {
@@ -73,8 +77,8 @@ func parseAddr(s string) (addr *address) {
 		}
 	}
 	p, _ := strconv.Atoi(port)
-	addr.port[0] = byte(p >> 8 & 0xff)
-	addr.port[1] = byte(p & 0xff)
+	addr.port[0] = byte(uint16(p) >> 8)
+	addr.port[1] = byte(uint16(p) & 0xff)
 
 	return
 }
@@ -107,7 +111,7 @@ func newMasterServer(conf *config) *masterServer {
 
 	m.slavers = map[string]*slaverAgent{}
 	m.name = conf.Name
-	m.ch = make(chan interface{}, 100)
+	m.ch = make(chan *channelEvent, 100)
 
 	return m
 }
@@ -117,9 +121,9 @@ func (m *masterServer) run() {
 	go m.listenSlaverJoin()
 
 	for e := range m.ch {
-		switch e.(type) {
-		case *buildTunnelReq:
-			m.buildTunnel(e.(*buildTunnelReq))
+		switch e.typ {
+		case _EVENT_M_BUILD_TUNNEL_REQ:
+			m.buildTunnel(e.data.(*buildTunnelReq))
 		}
 	}
 }
@@ -200,7 +204,7 @@ func (m *masterServer) buildTunnel(req *buildTunnelReq) (err error) {
 	if sa, exist = m.slavers[req.SlaverName]; !exist {
 		return ErrSlaverNotExist
 	}
-	sa.ch <- req
+	sa.ch <- &channelEvent{_EVENT_SA_BUILD_TUNNEL_REQ, req}
 
 	return
 }
