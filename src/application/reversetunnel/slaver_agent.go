@@ -7,47 +7,58 @@ import (
 )
 
 type slaverAgent struct {
-	tunnelAddr  *address
-	ctrl        net.Conn
-	ch          chan *channelEvent
-	pTunnels    map[string]*mProxyTunnel
-	standByConn map[uint64]*mProxyTunnelConn
+	name string
+
+	tunnelAddr *address
+	ctrl       net.Conn
+
+	pTunnels       map[string]*mProxyTunnel
+	waitingTunnels map[uint64]*mProxyTunnel
+
+	ch         chan *channelEvent
+	masterChan chan *channelEvent
 }
 
-const ()
+func newSlaverAgent(name string, conn net.Conn, tunnelAddr *address,
+	ch chan *channelEvent) *slaverAgent {
 
-func newSlaver(conn net.Conn, tunnelAddr *address) *slaverAgent {
 	return &slaverAgent{
-		tunnelAddr:  tunnelAddr,
-		ctrl:        conn,
-		ch:          make(chan *channelEvent, 10),
-		pTunnels:    map[string]*mProxyTunnel{},
-		standByConn: map[uint64]*mProxyTunnelConn{},
+		name: name,
+
+		tunnelAddr: tunnelAddr,
+		ctrl:       conn,
+
+		pTunnels:       map[string]*mProxyTunnel{},
+		waitingTunnels: map[uint64]*mProxyTunnel{},
+
+		ch:         make(chan *channelEvent, _CHANNEL_SIZE),
+		masterChan: ch,
 	}
 }
 
-func (s *slaverAgent) recvHeartbeat() {
+func recvHeartbeat(ctrl net.Conn, ch chan *channelEvent) {
 	for {
-		s.ctrl.SetReadDeadline(time.Now().Add(_NETWORK_TIMEOUT))
+		ctrl.SetReadDeadline(time.Now().Add(_NETWORK_TIMEOUT))
 
-		if cmd, err := parseCommandV1(s.ctrl); err != nil {
-			s.ch <- &channelEvent{_EVENT_SA_ERROR, err}
+		if cmd, err := parseCommandV1(ctrl); err != nil {
+			ch <- &channelEvent{_EVENT_SA_ERROR, err}
 			break
 		} else if cmd == CMD_V1_HEARTBEAT {
 			continue
 		} else {
-			s.ch <- &channelEvent{_EVENT_SA_ERROR, ErrCommand}
+			ch <- &channelEvent{_EVENT_SA_ERROR, ErrCommand}
 			break
 		}
 	}
 }
 
 func (s *slaverAgent) serve() {
-	go s.recvHeartbeat()
+	go recvHeartbeat(s.ctrl, s.ch)
+
 	for e := range s.ch {
 		switch e.typ {
 		case _EVENT_SA_ERROR:
-			return
+			goto terminate
 		case _EVENT_SA_BUILD_TUNNEL_REQ:
 			req := e.data.(*buildTunnelReq)
 			s.newProxyTunnel(req)
@@ -56,8 +67,19 @@ func (s *slaverAgent) serve() {
 			if _, err := s.ctrl.Write(e.data.([]byte)); err != nil {
 				logger.Error(err)
 			}
+		case _EVENT_SA_NEW_PTUNNEL_CONN:
+			req := e.data.(ptunnelConnReq)
+			s.waitingTunnels[req.tid] = req.t
+		case _EVENT_SA_PTUNNEL_CONN_ACK:
+			req := e.data.(*tunnelConnAckReq)
+			if t, exist := s.waitingTunnels[req.tid]; exist {
+				delete(s.waitingTunnels, req.tid)
+				t.ch <- &channelEvent{_EVENT_PT_CONN_ACK, req}
+			}
 		}
 	}
+terminate:
+	s.terminate()
 }
 
 func (s *slaverAgent) newProxyTunnel(req *buildTunnelReq) {
@@ -72,7 +94,8 @@ func (s *slaverAgent) newProxyTunnel(req *buildTunnelReq) {
 	s.pTunnels[req.MAddr] = pTunnel
 }
 
-func (s *slaverAgent) close() {
+func (s *slaverAgent) terminate() {
+	s.masterChan <- &channelEvent{_EVENT_SA_TERMINATE, s.name}
 	s.ctrl.Close()
 
 	for _, pTunnel := range s.pTunnels {

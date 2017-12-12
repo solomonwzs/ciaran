@@ -29,7 +29,7 @@ func Main() {
 
 	if conf.Role == "master" {
 		m := newMasterServer(conf)
-		m.run()
+		m.serve()
 	} else if conf.Role == "slaver" {
 		s := newSlaverServer(conf)
 		s.run()

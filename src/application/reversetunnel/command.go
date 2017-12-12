@@ -1,6 +1,7 @@
 package reversetunnel
 
 import (
+	"encoding/binary"
 	"io"
 )
 
@@ -42,4 +43,33 @@ func parseJoinAckV1(r io.Reader) (rep byte, err error) {
 		return
 	}
 	return buf[0], nil
+}
+
+func parseBuildTunnelAckV1(r io.Reader) (
+	name string, tid uint64, err error) {
+	buf := make([]byte, 64, 64)
+	if _, err = io.ReadFull(r, buf[:1]); err != nil {
+		return
+	} else if buf[0] == 0 || buf[0] > 64 {
+		err = ErrCommand
+		return
+	}
+
+	nameLen := buf[0]
+	if _, err = io.ReadFull(r, buf[:nameLen]); err != nil {
+		return
+	}
+
+	if err = binary.Read(r, binary.BigEndian, &tid); err != nil {
+		return
+	}
+
+	if io.ReadFull(r, buf[:1]); err != nil {
+		return
+	} else if buf[0] != REP_SUCCEEDS {
+		err = ErrReply
+		return
+	}
+
+	return
 }

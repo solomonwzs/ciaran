@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 )
 
@@ -15,11 +14,20 @@ const (
 	_EVENT_SA_ERROR
 	_EVENT_SA_BUILD_TUNNEL_REQ
 	_EVENT_SA_SEND_DATA
+	_EVENT_SA_PTUNNEL_CONN_ACK
+	_EVENT_SA_TERMINATE
+	_EVENT_SA_NEW_PTUNNEL_CONN
 
 	_EVENT_S_ERROR
 
+	_EVENT_M_NEW_SLAVER_CONN
 	_EVENT_M_BUILD_TUNNEL_REQ
+
+	_EVENT_PT_NEW_CONN
+	_EVENT_PT_CONN_ACK
 )
+
+const _CHANNEL_SIZE = 100
 
 var (
 	_HEARTBEAT_DURATION = 2 * time.Second
@@ -37,10 +45,9 @@ type address struct {
 	atype byte
 }
 
-type commandEvent struct {
-	typ  byte
-	cmd  byte
-	data interface{}
+type tunnelConnAckReq struct {
+	tid  uint64
+	conn net.Conn
 }
 
 type masterServer struct {
@@ -50,8 +57,7 @@ type masterServer struct {
 
 	tunnelAddr *address
 
-	slavers     map[string]*slaverAgent
-	slaversLock sync.RWMutex
+	slavers map[string]*slaverAgent
 
 	name string
 	ch   chan *channelEvent
@@ -111,49 +117,86 @@ func newMasterServer(conf *config) *masterServer {
 
 	m.slavers = map[string]*slaverAgent{}
 	m.name = conf.Name
-	m.ch = make(chan *channelEvent, 100)
+	m.ch = make(chan *channelEvent, _CHANNEL_SIZE)
 
 	return m
 }
 
-func (m *masterServer) run() {
-	go http.Serve(m.client, m)
-	go m.listenSlaverJoin()
+func (m *masterServer) serve() {
+	go http.Serve(m.client, &masterHttp{m.ch})
+	go listenSlaverJoin(m.ctrl, m.ch)
 
 	for e := range m.ch {
 		switch e.typ {
 		case _EVENT_M_BUILD_TUNNEL_REQ:
-			m.buildTunnel(e.data.(*buildTunnelReq))
-		}
-	}
-}
-
-func (m *masterServer) listenSlaverJoin() {
-	for {
-		conn, err := m.ctrl.Accept()
-		if err != nil {
-			logger.Error(err)
-			continue
-		}
-		go func() {
-			err := m.newSlaver(conn)
-			if err != nil {
-				logger.Error(err)
+			req := e.data.(*buildTunnelReq)
+			m.sendEventToAgent(req.SlaverName,
+				&channelEvent{_EVENT_SA_BUILD_TUNNEL_REQ, req})
+		case _EVENT_SA_TERMINATE:
+			name := e.data.(string)
+			delete(m.slavers, name)
+		case _EVENT_M_NEW_SLAVER_CONN:
+			conn := e.data.(net.Conn)
+			if err := m.startSlaverAgent(conn); err != nil {
 				conn.Close()
 			}
-		}()
+		}
 	}
 }
 
-func (m *masterServer) newSlaver(conn net.Conn) (err error) {
+func (m *masterServer) listenTunnelConn() {
+	for {
+		if conn, err := m.tunnel.Accept(); err != nil {
+			logger.Error(err)
+		} else {
+			conn.SetReadDeadline(time.Now().Add(_NETWORK_TIMEOUT))
+			if cmd, err := parseCommandV1(conn); err != nil {
+				logger.Error(err)
+			} else if cmd != CMD_V1_BUILD_TUNNEL_ACK {
+				logger.Error("error: command")
+			} else if name, tid, err := parseBuildTunnelAckV1(
+				conn); err != nil {
+				logger.Error(err)
+			} else {
+				req := &tunnelConnAckReq{
+					tid:  tid,
+					conn: conn,
+				}
+				m.sendEventToAgent(name,
+					&channelEvent{_EVENT_SA_PTUNNEL_CONN_ACK, req})
+			}
+		}
+	}
+}
+
+func (m *masterServer) sendEventToAgent(name string, e *channelEvent) (
+	err error) {
+	if sa, exist := m.slavers[name]; !exist {
+		return ErrSlaverNotExist
+	} else {
+		sa.ch <- e
+	}
+	return
+}
+
+func listenSlaverJoin(ctrl net.Listener, ch chan *channelEvent) {
+	for {
+		if conn, err := ctrl.Accept(); err != nil {
+			logger.Error(err)
+		} else {
+			ch <- &channelEvent{_EVENT_M_NEW_SLAVER_CONN, conn}
+		}
+	}
+}
+
+func (m *masterServer) startSlaverAgent(conn net.Conn) (err error) {
 	conn.SetDeadline(time.Now().Add(_NETWORK_TIMEOUT))
 	defer conn.SetDeadline(time.Time{})
 
 	var cmd byte
 	if cmd, err = parseCommandV1(conn); err != nil {
 		return
-	}
-	if cmd != CMD_V1_JOIN {
+	} else if cmd != CMD_V1_JOIN {
 		return ErrCommand
 	}
 
@@ -172,39 +215,12 @@ func (m *masterServer) newSlaver(conn net.Conn) (err error) {
 			return
 		}
 
-		s := newSlaver(conn, m.tunnelAddr)
-		m.slaversLock.Lock()
+		s := newSlaverAgent(name, conn, m.tunnelAddr, m.ch)
 		m.slavers[name] = s
-		m.slaversLock.Unlock()
 
-		go func() {
-			logger.Infof("slaver: %s join\n", name)
-			s.serve()
-			logger.Infof("slaver: %s left\n", name)
-
-			m.slaversLock.Lock()
-			delete(m.slavers, name)
-			m.slaversLock.Unlock()
-
-			s.close()
-		}()
+		logger.Infof("slaver: %s join\n", name)
+		go s.serve()
+		logger.Infof("slaver: %s left\n", name)
 	}
-	return
-}
-
-func (m *masterServer) buildTunnel(req *buildTunnelReq) (err error) {
-	m.slaversLock.RLock()
-	defer m.slaversLock.RUnlock()
-
-	var (
-		sa    *slaverAgent
-		exist bool
-	)
-
-	if sa, exist = m.slavers[req.SlaverName]; !exist {
-		return ErrSlaverNotExist
-	}
-	sa.ch <- &channelEvent{_EVENT_SA_BUILD_TUNNEL_REQ, req}
-
 	return
 }
