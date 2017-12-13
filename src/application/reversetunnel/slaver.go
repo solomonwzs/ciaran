@@ -33,12 +33,11 @@ func newSlaverServer(conf *config) *slaverServer {
 	return s
 }
 
-func (s *slaverServer) sendHeartbeat() {
-	var err error
+func sendHeartbeat(conn net.Conn, ch chan *channelEvent) {
 	for {
-		s.ctrl.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
-		if _, err = s.ctrl.Write(_BYTES_V1_HEARTBEAT); err != nil {
-			(&channelEvent{_EVENT_S_ERROR, err}).sendTo(s.ch)
+		conn.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
+		if _, err := conn.Write(_BYTES_V1_HEARTBEAT); err != nil {
+			(&channelEvent{_EVENT_S_HEARTBEAT_ERROR, err}).sendTo(ch)
 			return
 		}
 		time.Sleep(_HEARTBEAT_DURATION)
@@ -102,11 +101,11 @@ func (s *slaverServer) joinMaster() (err error) {
 	return
 }
 
-func (s *slaverServer) recvCommand() {
+func recvCommand(conn net.Conn, ch chan *channelEvent) {
 	for {
-		s.ctrl.SetReadDeadline(time.Time{})
-		if _, err := parseCommandV1(s.ctrl); err != nil {
-			(&channelEvent{_EVENT_S_ERROR, err}).sendTo(s.ch)
+		conn.SetReadDeadline(time.Time{})
+		if _, err := parseCommandV1(conn); err != nil {
+			(&channelEvent{_EVENT_S_ERROR, err}).sendTo(ch)
 		} else {
 		}
 	}
@@ -117,8 +116,9 @@ func (s *slaverServer) serve() {
 	if err != nil {
 		panic(err)
 	}
-	go s.sendHeartbeat()
-	go s.recvCommand()
+	go sendHeartbeat(s.ctrl, s.ch)
+	go recvCommand(s.ctrl, s.ch)
+
 	for e := range s.ch {
 		if e.typ == _EVENT_S_ERROR {
 			logger.Error(e.data.(error))
