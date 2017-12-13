@@ -3,6 +3,7 @@ package reversetunnel
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -24,7 +25,23 @@ func newTid() uint64 {
 type mProxyTunnelConn struct {
 	mConn net.Conn
 	sConn net.Conn
+	tChan chan *channelEvent
 	tid   uint64
+}
+
+func (c *mProxyTunnelConn) close() {
+	if c.mConn != nil {
+		c.mConn.Close()
+	}
+	if c.sConn != nil {
+		c.sConn.Close()
+	}
+}
+
+func (c *mProxyTunnelConn) serve() {
+	go io.Copy(c.mConn, c.sConn)
+	io.Copy(c.sConn, c.mConn)
+	(&channelEvent{_EVENT_PT_CONN_CLOSE, c.tid}).sendTo(c.tChan)
 }
 
 type ptunnelConnReq struct {
@@ -34,6 +51,7 @@ type ptunnelConnReq struct {
 
 type mProxyTunnel struct {
 	clientListener net.Listener
+	listenAddr     string
 	mAddr          *address
 	sAddr          *address
 	tunnelCmdPre   []byte
@@ -48,8 +66,9 @@ type mProxyTunnel struct {
 func newMProxyTunnel(mAddr, sAddr *address, listenAddr string,
 	agentChan chan *channelEvent) (pt *mProxyTunnel, err error) {
 	pt = &mProxyTunnel{
-		mAddr: mAddr,
-		sAddr: sAddr,
+		listenAddr: listenAddr,
+		mAddr:      mAddr,
+		sAddr:      sAddr,
 
 		ch:        make(chan *channelEvent, _CHANNEL_SIZE),
 		agentChan: agentChan,
@@ -76,11 +95,7 @@ func listenClientConn(l net.Listener, ch chan *channelEvent) {
 	for {
 		if conn, err := l.Accept(); err != nil {
 		} else {
-			c := &mProxyTunnelConn{
-				mConn: conn,
-				tid:   newTid(),
-			}
-			ch <- &channelEvent{_EVENT_PT_NEW_CONN, c}
+			(&channelEvent{_EVENT_PT_NEW_CONN, conn}).sendTo(ch)
 		}
 	}
 }
@@ -91,20 +106,61 @@ func (pt *mProxyTunnel) serve() {
 	for e := range pt.ch {
 		switch e.typ {
 		case _EVENT_PT_NEW_CONN:
-			c := e.data.(*mProxyTunnelConn)
+			conn := e.data.(net.Conn)
+			c := &mProxyTunnelConn{
+				mConn: conn,
+				tChan: pt.ch,
+				tid:   newTid(),
+			}
 			pt.waitingConns[c.tid] = c
-			pt.agentChan <- &channelEvent{
+			(&channelEvent{
 				_EVENT_SA_NEW_PTUNNEL_CONN,
-				&ptunnelConnReq{c.tid, pt}}
+				&ptunnelConnReq{c.tid, pt}}).sendTo(pt.agentChan)
 
 			buf := new(bytes.Buffer)
 			buf.Write(pt.tunnelCmdPre)
 			binary.Write(buf, binary.BigEndian, c.tid)
-			pt.agentChan <- &channelEvent{_EVENT_SA_SEND_DATA, buf.Bytes()}
+			(&channelEvent{_EVENT_SA_SEND_DATA, buf.Bytes()}).sendTo(
+				pt.agentChan)
+		case _EVENT_PT_CONN_ACK:
+			req := e.data.(*tunnelConnAckReq)
+			if c, exist := pt.waitingConns[req.tid]; exist {
+				c.sConn = req.conn
+				delete(pt.waitingConns, req.tid)
+				pt.runningConns[req.tid] = c
+			}
+		case _EVENT_PT_CONN_CLOSE:
+			tid := e.data.(uint64)
+			if c, exist := pt.runningConns[tid]; exist {
+				delete(pt.runningConns, tid)
+				c.close()
+			}
+		case _EVENT_PT_SHUTDOWN:
+			goto end
 		}
 	}
+end:
+	pt.terminate()
 }
 
-func (pt *mProxyTunnel) close() {
+func (pt *mProxyTunnel) terminate() {
+	(&channelEvent{_EVENT_PT_TERMINATE, pt}).sendTo(pt.agentChan)
 	pt.clientListener.Close()
+
+	for _, c := range pt.waitingConns {
+		c.close()
+	}
+	for _, c := range pt.runningConns {
+		c.close()
+	}
+
+	end := time.After(_NETWORK_TIMEOUT)
+	for {
+		select {
+		case <-pt.ch:
+			break
+		case <-end:
+			return
+		}
+	}
 }

@@ -16,15 +16,20 @@ const (
 	_EVENT_SA_SEND_DATA
 	_EVENT_SA_PTUNNEL_CONN_ACK
 	_EVENT_SA_TERMINATE
+	_EVENT_SA_SHUTDOWN
 	_EVENT_SA_NEW_PTUNNEL_CONN
 
 	_EVENT_S_ERROR
 
 	_EVENT_M_NEW_SLAVER_CONN
+	_EVENT_M_PTUNNEL_CONN_ACK
 	_EVENT_M_BUILD_TUNNEL_REQ
 
 	_EVENT_PT_NEW_CONN
 	_EVENT_PT_CONN_ACK
+	_EVENT_PT_CONN_CLOSE
+	_EVENT_PT_SHUTDOWN
+	_EVENT_PT_TERMINATE
 )
 
 const _CHANNEL_SIZE = 100
@@ -39,6 +44,12 @@ type channelEvent struct {
 	data interface{}
 }
 
+func (e *channelEvent) sendTo(ch chan *channelEvent) {
+	go func() {
+		ch <- e
+	}()
+}
+
 type address struct {
 	ip    []byte
 	port  [2]byte
@@ -46,8 +57,9 @@ type address struct {
 }
 
 type tunnelConnAckReq struct {
-	tid  uint64
-	conn net.Conn
+	tid       uint64
+	agentName string
+	conn      net.Conn
 }
 
 type masterServer struct {
@@ -125,13 +137,16 @@ func newMasterServer(conf *config) *masterServer {
 func (m *masterServer) serve() {
 	go http.Serve(m.client, &masterHttp{m.ch})
 	go listenSlaverJoin(m.ctrl, m.ch)
+	go listenTunnelConn(m.tunnel, m.ch)
 
 	for e := range m.ch {
 		switch e.typ {
 		case _EVENT_M_BUILD_TUNNEL_REQ:
 			req := e.data.(*buildTunnelReq)
-			m.sendEventToAgent(req.SlaverName,
-				&channelEvent{_EVENT_SA_BUILD_TUNNEL_REQ, req})
+			if sa, exist := m.slavers[req.SlaverName]; exist {
+				(&channelEvent{_EVENT_SA_BUILD_TUNNEL_REQ, req}).sendTo(
+					sa.ch)
+			}
 		case _EVENT_SA_TERMINATE:
 			name := e.data.(string)
 			delete(m.slavers, name)
@@ -140,13 +155,19 @@ func (m *masterServer) serve() {
 			if err := m.startSlaverAgent(conn); err != nil {
 				conn.Close()
 			}
+		case _EVENT_M_PTUNNEL_CONN_ACK:
+			req := e.data.(*tunnelConnAckReq)
+			if sa, exist := m.slavers[req.agentName]; exist {
+				(&channelEvent{_EVENT_SA_PTUNNEL_CONN_ACK, req}).sendTo(
+					sa.ch)
+			}
 		}
 	}
 }
 
-func (m *masterServer) listenTunnelConn() {
+func listenTunnelConn(tunnel net.Listener, ch chan *channelEvent) {
 	for {
-		if conn, err := m.tunnel.Accept(); err != nil {
+		if conn, err := tunnel.Accept(); err != nil {
 			logger.Error(err)
 		} else {
 			conn.SetReadDeadline(time.Now().Add(_NETWORK_TIMEOUT))
@@ -159,24 +180,14 @@ func (m *masterServer) listenTunnelConn() {
 				logger.Error(err)
 			} else {
 				req := &tunnelConnAckReq{
-					tid:  tid,
-					conn: conn,
+					tid:       tid,
+					agentName: name,
+					conn:      conn,
 				}
-				m.sendEventToAgent(name,
-					&channelEvent{_EVENT_SA_PTUNNEL_CONN_ACK, req})
+				(&channelEvent{_EVENT_M_PTUNNEL_CONN_ACK, req}).sendTo(ch)
 			}
 		}
 	}
-}
-
-func (m *masterServer) sendEventToAgent(name string, e *channelEvent) (
-	err error) {
-	if sa, exist := m.slavers[name]; !exist {
-		return ErrSlaverNotExist
-	} else {
-		sa.ch <- e
-	}
-	return
 }
 
 func listenSlaverJoin(ctrl net.Listener, ch chan *channelEvent) {
@@ -184,7 +195,7 @@ func listenSlaverJoin(ctrl net.Listener, ch chan *channelEvent) {
 		if conn, err := ctrl.Accept(); err != nil {
 			logger.Error(err)
 		} else {
-			ch <- &channelEvent{_EVENT_M_NEW_SLAVER_CONN, conn}
+			(&channelEvent{_EVENT_M_NEW_SLAVER_CONN, conn}).sendTo(ch)
 		}
 	}
 }

@@ -41,12 +41,12 @@ func recvHeartbeat(ctrl net.Conn, ch chan *channelEvent) {
 		ctrl.SetReadDeadline(time.Now().Add(_NETWORK_TIMEOUT))
 
 		if cmd, err := parseCommandV1(ctrl); err != nil {
-			ch <- &channelEvent{_EVENT_SA_ERROR, err}
+			(&channelEvent{_EVENT_SA_ERROR, err}).sendTo(ch)
 			break
 		} else if cmd == CMD_V1_HEARTBEAT {
 			continue
 		} else {
-			ch <- &channelEvent{_EVENT_SA_ERROR, ErrCommand}
+			(&channelEvent{_EVENT_SA_ERROR, ErrCommand}).sendTo(ch)
 			break
 		}
 	}
@@ -58,7 +58,9 @@ func (s *slaverAgent) serve() {
 	for e := range s.ch {
 		switch e.typ {
 		case _EVENT_SA_ERROR:
-			goto terminate
+			goto end
+		case _EVENT_SA_SHUTDOWN:
+			goto end
 		case _EVENT_SA_BUILD_TUNNEL_REQ:
 			req := e.data.(*buildTunnelReq)
 			s.newProxyTunnel(req)
@@ -74,11 +76,17 @@ func (s *slaverAgent) serve() {
 			req := e.data.(*tunnelConnAckReq)
 			if t, exist := s.waitingTunnels[req.tid]; exist {
 				delete(s.waitingTunnels, req.tid)
-				t.ch <- &channelEvent{_EVENT_PT_CONN_ACK, req}
+				(&channelEvent{_EVENT_PT_CONN_ACK, req}).sendTo(t.ch)
+			}
+		case _EVENT_PT_TERMINATE:
+			pt := e.data.(*mProxyTunnel)
+			delete(s.pTunnels, pt.listenAddr)
+			for tid, _ := range pt.waitingConns {
+				delete(s.waitingTunnels, tid)
 			}
 		}
 	}
-terminate:
+end:
 	s.terminate()
 }
 
@@ -95,11 +103,12 @@ func (s *slaverAgent) newProxyTunnel(req *buildTunnelReq) {
 }
 
 func (s *slaverAgent) terminate() {
-	s.masterChan <- &channelEvent{_EVENT_SA_TERMINATE, s.name}
+	(&channelEvent{_EVENT_SA_TERMINATE, s.name}).sendTo(s.masterChan)
 	s.ctrl.Close()
 
+	shutdownEvent := &channelEvent{_EVENT_PT_SHUTDOWN, nil}
 	for _, pTunnel := range s.pTunnels {
-		pTunnel.close()
+		shutdownEvent.sendTo(pTunnel.ch)
 	}
 
 	end := time.After(_NETWORK_TIMEOUT)

@@ -67,6 +67,7 @@ func (m *masterHttp) buildTunnelHandler(w http.ResponseWriter,
 		return
 	}
 	logger.Debugf("%+v\n", req)
+	(&channelEvent{_EVENT_M_NEW_SLAVER_CONN, req}).sendTo(m.masterCh)
 
 	return
 }

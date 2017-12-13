@@ -38,7 +38,7 @@ func (s *slaverServer) sendHeartbeat() {
 	for {
 		s.ctrl.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
 		if _, err = s.ctrl.Write(_BYTES_V1_HEARTBEAT); err != nil {
-			s.ch <- &channelEvent{_EVENT_S_ERROR, err}
+			(&channelEvent{_EVENT_S_ERROR, err}).sendTo(s.ch)
 			return
 		}
 		time.Sleep(_HEARTBEAT_DURATION)
@@ -106,7 +106,7 @@ func (s *slaverServer) recvCommand() {
 	for {
 		s.ctrl.SetReadDeadline(time.Time{})
 		if _, err := parseCommandV1(s.ctrl); err != nil {
-			s.ch <- &channelEvent{_EVENT_S_ERROR, err}
+			(&channelEvent{_EVENT_S_ERROR, err}).sendTo(s.ch)
 		} else {
 		}
 	}
