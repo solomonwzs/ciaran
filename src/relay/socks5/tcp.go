@@ -115,7 +115,7 @@ func (h *TCPHandler) stageAddr() (err error) {
 			if _, err = io.ReadFull(h.conn, buf[:4]); err != nil {
 				return
 			}
-			host = net.IPv4(buf[0], buf[1], buf[2], buf[3]).String()
+			host = net.IP(buf[:4]).String()
 		case ATYP_DOMAINNAME:
 			if _, err = io.ReadFull(h.conn, buf[:1]); err != nil {
 				return

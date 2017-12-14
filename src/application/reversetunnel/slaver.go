@@ -11,25 +11,27 @@ var (
 	_BYTES_V1_HEARTBEAT = []byte{PROTO_VER, CMD_V1_HEARTBEAT}
 )
 
+type mProxyTunnelConnInfo struct {
+	mAddr *address
+	sAddr *address
+	tid   uint64
+}
+
 type slaverServer struct {
 	ctrl       net.Conn
 	masterAddr string
 	name       string
 	ch         chan *channelEvent
-}
-
-type sProxyTunnel struct {
-	rEnd       net.Conn
-	lEnd       net.Conn
-	id         uint32
-	targetPort string
+	conns      map[uint64]*mProxyTunnelConn
 }
 
 func newSlaverServer(conf *config) *slaverServer {
-	s := new(slaverServer)
-	s.masterAddr = conf.JoinAddr
-	s.name = conf.Name
-	s.ch = make(chan *channelEvent, 10)
+	s := &slaverServer{
+		masterAddr: conf.JoinAddr,
+		name:       conf.Name,
+		ch:         make(chan *channelEvent, 10),
+		conns:      map[uint64]*mProxyTunnelConn{},
+	}
 	return s
 }
 
@@ -102,11 +104,27 @@ func (s *slaverServer) joinMaster() (err error) {
 }
 
 func recvCommand(conn net.Conn, ch chan *channelEvent) {
+	var (
+		cmd byte
+		err error
+	)
 	for {
 		conn.SetReadDeadline(time.Time{})
-		if _, err := parseCommandV1(conn); err != nil {
-			(&channelEvent{_EVENT_S_ERROR, err}).sendTo(ch)
-		} else {
+		if cmd, err = parseCommandV1(conn); err != nil {
+			(&channelEvent{_EVENT_S_CMD_CONN_ERROR, err}).sendTo(ch)
+			continue
+		}
+		switch cmd {
+		case CMD_V1_BUILD_TUNNEL:
+			info := new(mProxyTunnelConnInfo)
+			conn.SetReadDeadline(time.Now().Add(_NETWORK_TIMEOUT))
+			info.mAddr, info.sAddr, info.tid, err = parseBuildTunnelV1(
+				conn)
+			if err != nil {
+				(&channelEvent{_EVENT_S_CMD_CONN_ERROR, err}).sendTo(ch)
+				break
+			}
+			(&channelEvent{_EVENT_S_PT_CONN_INFO, info}).sendTo(ch)
 		}
 	}
 }
@@ -120,7 +138,8 @@ func (s *slaverServer) serve() {
 	go recvCommand(s.ctrl, s.ch)
 
 	for e := range s.ch {
-		if e.typ == _EVENT_S_ERROR {
+		switch e.typ {
+		case _EVENT_S_ERROR:
 			logger.Error(e.data.(error))
 			return
 		}
@@ -129,16 +148,7 @@ func (s *slaverServer) serve() {
 
 func (s *slaverServer) reset() {
 	s.ctrl.Close()
-
-	end := time.After(_NETWORK_TIMEOUT + 1*time.Second)
-	for {
-		select {
-		case <-s.ch:
-			break
-		case <-end:
-			return
-		}
-	}
+	waitForChanClear(s.ch)
 }
 
 func (s *slaverServer) run() {

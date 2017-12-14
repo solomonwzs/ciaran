@@ -45,6 +45,39 @@ func parseJoinAckV1(r io.Reader) (rep byte, err error) {
 	return buf[0], nil
 }
 
+func parseBuildTunnelV1(r io.Reader) (
+	mAddr, sAddr *address, tid uint64, err error) {
+	buf := make([]byte, 8, 8)
+
+	addrs := []*address{new(address), new(address)}
+	for i := 0; i < 2; i++ {
+		if _, err = io.ReadFull(r, buf[:1]); err != nil {
+			return
+		} else {
+			if buf[0] == ATYP_IPV4 {
+				addrs[i].ip = make([]byte, 4)
+			} else if buf[0] == ATYP_IPV6 {
+				addrs[i].ip = make([]byte, 16)
+			} else {
+				err = ErrCommand
+				return
+			}
+			if _, err = io.ReadFull(r, addrs[i].ip); err != nil {
+				return
+			}
+			if _, err = io.ReadFull(r, addrs[i].port[:]); err != nil {
+				return
+			}
+			addrs[i].atype = buf[0]
+		}
+	}
+	if err = binary.Read(r, binary.BigEndian, &tid); err != nil {
+		return
+	}
+
+	return addrs[0], addrs[1], tid, nil
+}
+
 func parseBuildTunnelAckV1(r io.Reader) (
 	name string, tid uint64, err error) {
 	buf := make([]byte, 64, 64)

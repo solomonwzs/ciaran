@@ -111,13 +111,5 @@ func (s *slaverAgent) terminate() {
 		shutdownEvent.sendTo(pTunnel.ch)
 	}
 
-	end := time.After(_NETWORK_TIMEOUT)
-	for {
-		select {
-		case <-s.ch:
-			break
-		case <-end:
-			return
-		}
-	}
+	waitForChanClear(s.ch)
 }

@@ -2,6 +2,7 @@ package reversetunnel
 
 import (
 	"fmt"
+	"io"
 	"logger"
 	"net"
 	"net/http"
@@ -20,6 +21,8 @@ const (
 	_EVENT_SA_NEW_PTUNNEL_CONN
 
 	_EVENT_S_ERROR
+	_EVENT_S_CMD_CONN_ERROR
+	_EVENT_S_PT_CONN_INFO
 	_EVENT_S_HEARTBEAT_ERROR
 	_EVENT_S_RECV_CMD_ERROR
 
@@ -58,10 +61,19 @@ type address struct {
 	atype byte
 }
 
+func (addr *address) String() string {
+	port := strconv.Itoa(int(addr.port[0])<<8 | int(addr.port[1]))
+	if (addr.atype == ATYP_IPV4 && len(addr.ip) == 4) ||
+		(addr.atype == ATYP_IPV6 && len(addr.ip) == 16) {
+		return net.JoinHostPort(net.IP(addr.ip).String(), port)
+	}
+	return ""
+}
+
 type tunnelConnAckReq struct {
 	tid       uint64
 	agentName string
-	conn      net.Conn
+	net.Conn
 }
 
 type masterServer struct {
@@ -75,6 +87,20 @@ type masterServer struct {
 
 	name string
 	ch   chan *channelEvent
+}
+
+func waitForChanClear(ch chan *channelEvent) {
+	end := time.After(_NETWORK_TIMEOUT + 1*time.Second)
+	for {
+		select {
+		case e := <-ch:
+			if d, ok := e.data.(io.Closer); ok {
+				d.Close()
+			}
+		case <-end:
+			return
+		}
+	}
 }
 
 func parseAddr(s string) (addr *address) {
@@ -181,10 +207,11 @@ func listenTunnelConn(tunnel net.Listener, ch chan *channelEvent) {
 				conn); err != nil {
 				logger.Error(err)
 			} else {
+				conn.SetReadDeadline(time.Time{})
 				req := &tunnelConnAckReq{
 					tid:       tid,
 					agentName: name,
-					conn:      conn,
+					Conn:      conn,
 				}
 				(&channelEvent{_EVENT_M_PTUNNEL_CONN_ACK, req}).sendTo(ch)
 			}

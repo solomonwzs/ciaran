@@ -29,13 +29,14 @@ type mProxyTunnelConn struct {
 	tid   uint64
 }
 
-func (c *mProxyTunnelConn) close() {
+func (c *mProxyTunnelConn) Close() error {
 	if c.mConn != nil {
 		c.mConn.Close()
 	}
 	if c.sConn != nil {
 		c.sConn.Close()
 	}
+	return nil
 }
 
 func (c *mProxyTunnelConn) serve() {
@@ -125,7 +126,7 @@ func (pt *mProxyTunnel) serve() {
 		case _EVENT_PT_CONN_ACK:
 			req := e.data.(*tunnelConnAckReq)
 			if c, exist := pt.waitingConns[req.tid]; exist {
-				c.sConn = req.conn
+				c.sConn = req.Conn
 				delete(pt.waitingConns, req.tid)
 				pt.runningConns[req.tid] = c
 			}
@@ -133,7 +134,7 @@ func (pt *mProxyTunnel) serve() {
 			tid := e.data.(uint64)
 			if c, exist := pt.runningConns[tid]; exist {
 				delete(pt.runningConns, tid)
-				c.close()
+				c.Close()
 			}
 		case _EVENT_PT_SHUTDOWN:
 			goto end
@@ -148,19 +149,11 @@ func (pt *mProxyTunnel) terminate() {
 	pt.clientListener.Close()
 
 	for _, c := range pt.waitingConns {
-		c.close()
+		c.Close()
 	}
 	for _, c := range pt.runningConns {
-		c.close()
+		c.Close()
 	}
 
-	end := time.After(_NETWORK_TIMEOUT)
-	for {
-		select {
-		case <-pt.ch:
-			break
-		case <-end:
-			return
-		}
-	}
+	waitForChanClear(pt.ch)
 }
