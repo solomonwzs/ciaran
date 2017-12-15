@@ -40,7 +40,6 @@ func sendHeartbeat(conn net.Conn, ch chan *channelEvent) {
 		conn.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
 		if _, err := conn.Write(_BYTES_V1_HEARTBEAT); err != nil {
 			(&channelEvent{_EVENT_S_HEARTBEAT_ERROR, err}).sendTo(ch)
-			return
 		}
 		time.Sleep(_HEARTBEAT_DURATION)
 	}
@@ -142,6 +141,7 @@ func (s *slaverServer) serve() {
 		case _EVENT_S_ERROR:
 			logger.Error(e.data.(error))
 			return
+		case _EVENT_S_PT_CONN_INFO:
 		}
 	}
 }

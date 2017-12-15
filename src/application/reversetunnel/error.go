@@ -1,6 +1,8 @@
 package reversetunnel
 
-import "errors"
+import (
+	"errors"
+)
 
 var (
 	ErrDupicateSlaverName = errors.New("duplicate slaver name")
