@@ -3,7 +3,6 @@ package reversetunnel
 import (
 	"bytes"
 	"encoding/binary"
-	"io"
 	"net"
 	"sync"
 	"time"
@@ -22,29 +21,6 @@ func newTid() uint64 {
 	return _TID
 }
 
-type mProxyTunnelConn struct {
-	mConn net.Conn
-	sConn net.Conn
-	tChan chan *channelEvent
-	tid   uint64
-}
-
-func (c *mProxyTunnelConn) Close() error {
-	if c.mConn != nil {
-		c.mConn.Close()
-	}
-	if c.sConn != nil {
-		c.sConn.Close()
-	}
-	return nil
-}
-
-func (c *mProxyTunnelConn) serve() {
-	go io.Copy(c.mConn, c.sConn)
-	io.Copy(c.sConn, c.mConn)
-	(&channelEvent{_EVENT_PT_CONN_CLOSE, c.tid}).sendTo(c.tChan)
-}
-
 type ptunnelConnReq struct {
 	tid uint64
 	t   *mProxyTunnel
@@ -60,8 +36,7 @@ type mProxyTunnel struct {
 	ch        chan *channelEvent
 	agentChan chan *channelEvent
 
-	waitingConns map[uint64]*mProxyTunnelConn
-	runningConns map[uint64]*mProxyTunnelConn
+	ptConns map[uint64]*mProxyTunnelConn
 }
 
 func newMProxyTunnel(mAddr, sAddr *address, listenAddr string,
@@ -74,8 +49,7 @@ func newMProxyTunnel(mAddr, sAddr *address, listenAddr string,
 		ch:        make(chan *channelEvent, _CHANNEL_SIZE),
 		agentChan: agentChan,
 
-		waitingConns: map[uint64]*mProxyTunnelConn{},
-		runningConns: map[uint64]*mProxyTunnelConn{},
+		ptConns: map[uint64]*mProxyTunnelConn{},
 	}
 
 	buf := new(bytes.Buffer)
@@ -108,12 +82,9 @@ func (pt *mProxyTunnel) serve() {
 		switch e.typ {
 		case _EVENT_PT_NEW_CONN:
 			conn := e.data.(net.Conn)
-			c := &mProxyTunnelConn{
-				mConn: conn,
-				tChan: pt.ch,
-				tid:   newTid(),
-			}
-			pt.waitingConns[c.tid] = c
+			c := newMProxyTunnelConn(conn, pt.ch)
+			go c.serve()
+			pt.ptConns[c.tid] = c
 			(&channelEvent{
 				_EVENT_SA_NEW_PTUNNEL_CONN,
 				&ptunnelConnReq{c.tid, pt}}).sendTo(pt.agentChan)
@@ -125,16 +96,15 @@ func (pt *mProxyTunnel) serve() {
 				pt.agentChan)
 		case _EVENT_PT_CONN_ACK:
 			req := e.data.(*tunnelConnAckReq)
-			if c, exist := pt.waitingConns[req.tid]; exist {
-				c.sConn = req.Conn
-				delete(pt.waitingConns, req.tid)
-				pt.runningConns[req.tid] = c
+			if c, exist := pt.ptConns[req.tid]; exist {
+				(&channelEvent{_EVENT_PTC_ACK, req.Conn}).sendTo(c.ch)
+			} else {
+				req.Close()
 			}
-		case _EVENT_PT_CONN_CLOSE:
+		case _EVENT_PTC_TERMINATE:
 			tid := e.data.(uint64)
-			if c, exist := pt.runningConns[tid]; exist {
-				delete(pt.runningConns, tid)
-				c.Close()
+			if _, exist := pt.ptConns[tid]; exist {
+				delete(pt.ptConns, tid)
 			}
 		case _EVENT_PT_SHUTDOWN:
 			goto end
@@ -148,11 +118,9 @@ func (pt *mProxyTunnel) terminate() {
 	(&channelEvent{_EVENT_PT_TERMINATE, pt}).sendTo(pt.agentChan)
 	pt.clientListener.Close()
 
-	for _, c := range pt.waitingConns {
-		c.Close()
-	}
-	for _, c := range pt.runningConns {
-		c.Close()
+	e := (&channelEvent{_EVENT_PTC_CLOSE, nil})
+	for _, c := range pt.ptConns {
+		e.sendTo(c.ch)
 	}
 
 	waitForChanClear(pt.ch)
