@@ -112,5 +112,5 @@ func (s *slaverAgent) terminate() {
 		shutdownEvent.sendTo(pTunnel.ch)
 	}
 
-	waitForChanClear(s.ch)
+	waitForChanClean(s.ch)
 }

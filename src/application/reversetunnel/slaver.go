@@ -173,5 +173,5 @@ func runSlaver(s *slaverServer) {
 
 func (s *slaverServer) terminate() {
 	s.ctrl.Close()
-	waitForChanClear(s.ch)
+	waitForChanClean(s.ch)
 }

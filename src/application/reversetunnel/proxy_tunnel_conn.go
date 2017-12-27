@@ -78,5 +78,5 @@ end:
 }
 
 func (c *mProxyTunnelConn) terminate() {
-	waitForChanClear(c.ch)
+	waitForChanClean(c.ch)
 }

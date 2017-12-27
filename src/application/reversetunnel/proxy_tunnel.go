@@ -125,5 +125,5 @@ func (pt *mProxyTunnel) terminate() {
 		e.sendTo(c.ch)
 	}
 
-	waitForChanClear(pt.ch)
+	waitForChanClean(pt.ch)
 }

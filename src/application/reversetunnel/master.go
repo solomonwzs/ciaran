@@ -94,7 +94,7 @@ type masterServer struct {
 	ch   chan *channelEvent
 }
 
-func waitForChanClear(ch chan *channelEvent) {
+func waitForChanClean(ch chan *channelEvent) {
 	end := time.After(_NETWORK_TIMEOUT + 1*time.Second)
 	for {
 		select {
