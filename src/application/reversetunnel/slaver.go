@@ -40,6 +40,7 @@ func sendHeartbeat(conn net.Conn, ch chan *channelEvent) {
 		conn.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
 		if _, err := conn.Write(_BYTES_V1_HEARTBEAT); err != nil {
 			(&channelEvent{_EVENT_S_HEARTBEAT_ERROR, err}).sendTo(ch)
+			return
 		}
 		time.Sleep(_HEARTBEAT_DURATION)
 	}
@@ -58,6 +59,7 @@ func (s *slaverServer) joinMaster() (err error) {
 			logger.Error(err)
 		}
 		if retry {
+			logger.Info("slaver: wait for retry")
 			time.Sleep(2 * time.Second)
 		}
 
@@ -95,6 +97,7 @@ func (s *slaverServer) joinMaster() (err error) {
 				continue
 			}
 
+			logger.Info("slaver: join master")
 			break
 		}
 	}
@@ -110,9 +113,15 @@ func recvCommand(conn net.Conn, ch chan *channelEvent) {
 	for {
 		conn.SetReadDeadline(time.Time{})
 		if cmd, err = parseCommandV1(conn); err != nil {
-			(&channelEvent{_EVENT_S_CMD_CONN_ERROR, err}).sendTo(ch)
-			continue
+			if err == ErrIO {
+				(&channelEvent{_EVENT_S_CONN_ERROR, err}).sendTo(ch)
+				return
+			} else {
+				(&channelEvent{_EVENT_S_CMD_ERROR, err}).sendTo(ch)
+				continue
+			}
 		}
+
 		switch cmd {
 		case CMD_V1_BUILD_TUNNEL:
 			info := new(mProxyTunnelConnInfo)
@@ -120,7 +129,7 @@ func recvCommand(conn net.Conn, ch chan *channelEvent) {
 			info.mAddr, info.sAddr, info.tid, err = parseBuildTunnelV1(
 				conn)
 			if err != nil {
-				(&channelEvent{_EVENT_S_CMD_CONN_ERROR, err}).sendTo(ch)
+				(&channelEvent{_EVENT_S_CMD_ERROR, err}).sendTo(ch)
 				break
 			}
 			(&channelEvent{_EVENT_S_PT_CONN_INFO, info}).sendTo(ch)
@@ -140,20 +149,29 @@ func (s *slaverServer) serve() {
 		switch e.typ {
 		case _EVENT_S_ERROR:
 			logger.Error(e.data.(error))
-			return
+			goto end
 		case _EVENT_S_PT_CONN_INFO:
+		case _EVENT_S_HEARTBEAT_ERROR:
+			logger.Error(e.data.(error))
+			goto end
+		case _EVENT_S_CMD_ERROR:
+		case _EVENT_S_CONN_ERROR:
+			logger.Error(e.data.(error))
+			goto end
+		default:
 		}
 	}
+end:
+	s.terminate()
 }
 
-func (s *slaverServer) reset() {
-	s.ctrl.Close()
-	waitForChanClear(s.ch)
-}
-
-func (s *slaverServer) run() {
+func runSlaver(s *slaverServer) {
 	for {
 		s.serve()
-		s.reset()
 	}
+}
+
+func (s *slaverServer) terminate() {
+	s.ctrl.Close()
+	waitForChanClear(s.ch)
 }

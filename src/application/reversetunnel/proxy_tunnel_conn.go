@@ -52,7 +52,7 @@ func (c *mProxyTunnelConn) dataTransport() {
 func (c *mProxyTunnelConn) serve() {
 	for e := range c.ch {
 		switch e.typ {
-		case _EVENT_PTC_ACK:
+		case _EVENT_PTC_PTUNNEL_CONN_ACK:
 			if c.status == _PTC_STATUS_WAITING {
 				c.sConn = e.data.(net.Conn)
 				c.status = _PTC_STATUS_TRANSPORT

@@ -76,17 +76,18 @@ func (s *slaverAgent) serve() {
 			req := e.data.(*tunnelConnAckReq)
 			if t, exist := s.waitingTunnels[req.tid]; exist {
 				delete(s.waitingTunnels, req.tid)
-				(&channelEvent{_EVENT_PT_CONN_ACK, req}).sendTo(t.ch)
+				(&channelEvent{_EVENT_PT_PTUNNEL_CONN_ACK, req}).sendTo(t.ch)
 			}
 		case _EVENT_PT_TERMINATE:
 			pt := e.data.(*mProxyTunnel)
 			delete(s.pTunnels, pt.listenAddr)
-			for tid, _ := range pt.waitingConns {
+			for tid, _ := range pt.ptConns {
 				delete(s.waitingTunnels, tid)
 			}
 		}
 	}
 end:
+	logger.Infof("master: slaver [%s] left\n", s.name)
 	s.terminate()
 }
 

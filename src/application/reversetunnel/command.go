@@ -8,7 +8,7 @@ import (
 func parseCommandV1(r io.Reader) (cmd byte, err error) {
 	buf := make([]byte, 2, 2)
 	if _, err = io.ReadFull(r, buf); err != nil {
-		return CMD_V1_UNKNOWN, err
+		return CMD_V1_UNKNOWN, ErrIO
 	}
 
 	if buf[0] != PROTO_VER {
@@ -22,6 +22,7 @@ func parseJoinV1(r io.Reader) (name string, err error) {
 	buf := make([]byte, 64, 64)
 
 	if _, err = io.ReadFull(r, buf[:1]); err != nil {
+		err = ErrIO
 		return
 	}
 	if buf[0] == 0 || buf[0] > 64 {
@@ -30,6 +31,7 @@ func parseJoinV1(r io.Reader) (name string, err error) {
 
 	nameLen := buf[0]
 	if _, err = io.ReadFull(r, buf[:nameLen]); err != nil {
+		err = ErrIO
 		return
 	}
 
@@ -40,6 +42,7 @@ func parseJoinAckV1(r io.Reader) (rep byte, err error) {
 	buf := make([]byte, 1)
 
 	if _, err = io.ReadFull(r, buf); err != nil {
+		err = ErrIO
 		return
 	}
 	return buf[0], nil
@@ -52,6 +55,7 @@ func parseBuildTunnelV1(r io.Reader) (
 	addrs := []*address{new(address), new(address)}
 	for i := 0; i < 2; i++ {
 		if _, err = io.ReadFull(r, buf[:1]); err != nil {
+			err = ErrIO
 			return
 		} else {
 			if buf[0] == ATYP_IPV4 {
@@ -63,15 +67,18 @@ func parseBuildTunnelV1(r io.Reader) (
 				return
 			}
 			if _, err = io.ReadFull(r, addrs[i].ip); err != nil {
+				err = ErrIO
 				return
 			}
 			if _, err = io.ReadFull(r, addrs[i].port[:]); err != nil {
+				err = ErrIO
 				return
 			}
 			addrs[i].atype = buf[0]
 		}
 	}
 	if err = binary.Read(r, binary.BigEndian, &tid); err != nil {
+		err = ErrIO
 		return
 	}
 
@@ -82,6 +89,7 @@ func parseBuildTunnelAckV1(r io.Reader) (
 	name string, tid uint64, err error) {
 	buf := make([]byte, 64, 64)
 	if _, err = io.ReadFull(r, buf[:1]); err != nil {
+		err = ErrIO
 		return
 	} else if buf[0] == 0 || buf[0] > 64 {
 		err = ErrCommand
@@ -90,14 +98,17 @@ func parseBuildTunnelAckV1(r io.Reader) (
 
 	nameLen := buf[0]
 	if _, err = io.ReadFull(r, buf[:nameLen]); err != nil {
+		err = ErrIO
 		return
 	}
 
 	if err = binary.Read(r, binary.BigEndian, &tid); err != nil {
+		err = ErrIO
 		return
 	}
 
 	if io.ReadFull(r, buf[:1]); err != nil {
+		err = ErrIO
 		return
 	} else if buf[0] != REP_SUCCEEDS {
 		err = ErrReply

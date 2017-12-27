@@ -32,7 +32,7 @@ func Main() {
 		m.serve()
 	} else if conf.Role == "slaver" {
 		s := newSlaverServer(conf)
-		s.run()
+		runSlaver(s)
 	} else {
 		panic(fmt.Sprintf("unknown role %s", conf.Role))
 	}

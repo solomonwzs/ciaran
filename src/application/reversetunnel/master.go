@@ -11,7 +11,18 @@ import (
 )
 
 const (
-	_EVENT_SA_EVENT = iota
+	_EVENT_M_NEW_SLAVER_CONN = iota
+	_EVENT_M_PTUNNEL_CONN_ACK
+	_EVENT_M_BUILD_TUNNEL_REQ
+
+	_EVENT_S_ERROR
+	_EVENT_S_CONN_ERROR
+	_EVENT_S_CMD_ERROR
+	_EVENT_S_PT_CONN_INFO
+	_EVENT_S_HEARTBEAT_ERROR
+	_EVENT_S_RECV_CMD_ERROR
+
+	_EVENT_SA_EVENT
 	_EVENT_SA_ERROR
 	_EVENT_SA_BUILD_TUNNEL_REQ
 	_EVENT_SA_SEND_DATA
@@ -20,22 +31,12 @@ const (
 	_EVENT_SA_SHUTDOWN
 	_EVENT_SA_NEW_PTUNNEL_CONN
 
-	_EVENT_S_ERROR
-	_EVENT_S_CMD_CONN_ERROR
-	_EVENT_S_PT_CONN_INFO
-	_EVENT_S_HEARTBEAT_ERROR
-	_EVENT_S_RECV_CMD_ERROR
-
-	_EVENT_M_NEW_SLAVER_CONN
-	_EVENT_M_PTUNNEL_CONN_ACK
-	_EVENT_M_BUILD_TUNNEL_REQ
-
-	_EVENT_PT_NEW_CONN
-	_EVENT_PT_CONN_ACK
+	_EVENT_PT_NEW_PTUNNEL_CONN
+	_EVENT_PT_PTUNNEL_CONN_ACK
 	_EVENT_PT_SHUTDOWN
 	_EVENT_PT_TERMINATE
 
-	_EVENT_PTC_ACK
+	_EVENT_PTC_PTUNNEL_CONN_ACK
 	_EVENT_PTC_CLOSE
 	_EVENT_PTC_TRANS_END
 	_EVENT_PTC_TERMINATE
@@ -262,9 +263,8 @@ func (m *masterServer) startSlaverAgent(conn net.Conn) (err error) {
 		s := newSlaverAgent(name, conn, m.tunnelAddr, m.ch)
 		m.slavers[name] = s
 
-		logger.Infof("slaver: %s join\n", name)
+		logger.Infof("master: slaver [%s] join\n", name)
 		go s.serve()
-		logger.Infof("slaver: %s left\n", name)
 	}
 	return
 }

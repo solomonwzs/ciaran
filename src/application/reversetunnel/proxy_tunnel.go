@@ -70,7 +70,7 @@ func listenClientConn(l net.Listener, ch chan *channelEvent) {
 	for {
 		if conn, err := l.Accept(); err != nil {
 		} else {
-			(&channelEvent{_EVENT_PT_NEW_CONN, conn}).sendTo(ch)
+			(&channelEvent{_EVENT_PT_NEW_PTUNNEL_CONN, conn}).sendTo(ch)
 		}
 	}
 }
@@ -80,7 +80,7 @@ func (pt *mProxyTunnel) serve() {
 
 	for e := range pt.ch {
 		switch e.typ {
-		case _EVENT_PT_NEW_CONN:
+		case _EVENT_PT_NEW_PTUNNEL_CONN:
 			conn := e.data.(net.Conn)
 			c := newMProxyTunnelConn(conn, pt.ch)
 			go c.serve()
@@ -94,10 +94,12 @@ func (pt *mProxyTunnel) serve() {
 			binary.Write(buf, binary.BigEndian, c.tid)
 			(&channelEvent{_EVENT_SA_SEND_DATA, buf.Bytes()}).sendTo(
 				pt.agentChan)
-		case _EVENT_PT_CONN_ACK:
+		case _EVENT_PT_PTUNNEL_CONN_ACK:
 			req := e.data.(*tunnelConnAckReq)
 			if c, exist := pt.ptConns[req.tid]; exist {
-				(&channelEvent{_EVENT_PTC_ACK, req.Conn}).sendTo(c.ch)
+				(&channelEvent{
+					_EVENT_PTC_PTUNNEL_CONN_ACK,
+					req.Conn}).sendTo(c.ch)
 			} else {
 				req.Close()
 			}
