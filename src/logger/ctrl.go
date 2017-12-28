@@ -2,6 +2,7 @@ package logger
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -48,7 +49,12 @@ type ctrlManager struct {
 var (
 	debug bool         = true
 	cm    *ctrlManager = nil
+	pid   int
 )
+
+func init() {
+	pid = os.Getpid()
+}
 
 func (l *LogRecord) setLevel(level int) {
 	l.level = level
@@ -82,7 +88,7 @@ func broadcast(l *LogRecord) {
 }
 
 func ConsoleOutput(l *LogRecord) {
-	fmt.Printf("%s%s [%s %s:%d] \033[0m%s",
-		l.Color(), l.Created().Format("2006-01-02 15:04:05"),
+	fmt.Printf("%s%d %s [%s %s:%d] \033[0m%s",
+		l.Color(), pid, l.Created().Format("2006-01-02 15:04:05"),
 		l.LevelSName(), l.SFile(), l.Line(), l.Message())
 }

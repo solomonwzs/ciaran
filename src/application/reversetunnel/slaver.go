@@ -22,7 +22,7 @@ type slaverServer struct {
 	masterAddr string
 	name       string
 	ch         chan *channelEvent
-	conns      map[uint64]*mProxyTunnelConn
+	conns      map[uint64]*sProxyTunnelConn
 }
 
 func newSlaverServer(conf *config) *slaverServer {
@@ -30,7 +30,7 @@ func newSlaverServer(conf *config) *slaverServer {
 		masterAddr: conf.JoinAddr,
 		name:       conf.Name,
 		ch:         make(chan *channelEvent, 10),
-		conns:      map[uint64]*mProxyTunnelConn{},
+		conns:      map[uint64]*sProxyTunnelConn{},
 	}
 	return s
 }
@@ -151,6 +151,13 @@ func (s *slaverServer) serve() {
 			logger.Error(e.data.(error))
 			goto end
 		case _EVENT_S_PT_CONN_INFO:
+			info := e.data.(*mProxyTunnelConnInfo)
+			c, err0 := newSProxyTunnelConn(info, s)
+			if err0 != nil {
+				logger.Error(err0)
+				continue
+			}
+			go c.dataTransport()
 		case _EVENT_S_HEARTBEAT_ERROR:
 			logger.Error(e.data.(error))
 			goto end

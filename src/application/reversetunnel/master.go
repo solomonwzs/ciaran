@@ -32,6 +32,7 @@ const (
 	_EVENT_SA_NEW_PTUNNEL_CONN
 
 	_EVENT_PT_NEW_PTUNNEL_CONN
+	_EVENT_PT_ACCEPT_ERROR
 	_EVENT_PT_PTUNNEL_CONN_ACK
 	_EVENT_PT_SHUTDOWN
 	_EVENT_PT_TERMINATE
@@ -206,11 +207,14 @@ func listenTunnelConn(tunnel net.Listener, ch chan *channelEvent) {
 			conn.SetReadDeadline(time.Now().Add(_NETWORK_TIMEOUT))
 			if cmd, err := parseCommandV1(conn); err != nil {
 				logger.Error(err)
+				conn.Close()
 			} else if cmd != CMD_V1_BUILD_TUNNEL_ACK {
 				logger.Error("error: command")
+				conn.Close()
 			} else if name, tid, err := parseBuildTunnelAckV1(
 				conn); err != nil {
 				logger.Error(err)
+				conn.Close()
 			} else {
 				conn.SetReadDeadline(time.Time{})
 				req := &tunnelConnAckReq{

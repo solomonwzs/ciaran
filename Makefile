@@ -1,10 +1,11 @@
 # vim: noet:
 
-BASE 		= ${PWD}
-GOPATH 		:= ${BASE}:${GOPATH}
-TEMPLATE 	= "main.template"
-MAIN 		= "src/main.go"
-BINPATH 	= "bin"
+BASE 			= ${PWD}
+GOPATH 			:= ${BASE}:${GOPATH}
+TEMPLATE 		= "main.template"
+TEST_TEMPLATE 	= "test.template"
+MAIN 			= "src/main.go"
+BINPATH 		= "bin"
 
 APPS 		= $(wildcard src/application/*/main.go)
 FLAGS 		= "-ldflags \"-s -w\""
@@ -18,6 +19,9 @@ all:pre ${APPS:%.go=%.goc}
 
 pre:
 	@[ -d bin ] || mkdir bin
+
+reversetunnel_test:reversetunnel
+	@./test/reversetunnel_test.sh
 
 %.goc:
 	@echo -ne "\033[01;32m[Build]\033[0m $(target) ... "

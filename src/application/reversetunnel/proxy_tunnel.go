@@ -3,6 +3,7 @@ package reversetunnel
 import (
 	"bytes"
 	"encoding/binary"
+	"logger"
 	"net"
 	"sync"
 	"time"
@@ -53,7 +54,7 @@ func newMProxyTunnel(mAddr, sAddr *address, listenAddr string,
 	}
 
 	buf := new(bytes.Buffer)
-	buf.Write([]byte{PROTO_VER, CMD_V1_JOIN})
+	buf.Write([]byte{PROTO_VER, CMD_V1_BUILD_TUNNEL})
 	buf.Write([]byte{pt.mAddr.atype})
 	buf.Write(pt.mAddr.ip)
 	buf.Write(pt.mAddr.port[:])
@@ -69,6 +70,8 @@ func newMProxyTunnel(mAddr, sAddr *address, listenAddr string,
 func listenClientConn(l net.Listener, ch chan *channelEvent) {
 	for {
 		if conn, err := l.Accept(); err != nil {
+			(&channelEvent{_EVENT_PT_ACCEPT_ERROR, err}).sendTo(ch)
+			return
 		} else {
 			(&channelEvent{_EVENT_PT_NEW_PTUNNEL_CONN, conn}).sendTo(ch)
 		}
@@ -108,6 +111,9 @@ func (pt *mProxyTunnel) serve() {
 			if _, exist := pt.ptConns[tid]; exist {
 				delete(pt.ptConns, tid)
 			}
+		case _EVENT_PT_ACCEPT_ERROR:
+			logger.Error(e.data.(error))
+			goto end
 		case _EVENT_PT_SHUTDOWN:
 			goto end
 		}

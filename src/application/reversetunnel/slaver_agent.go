@@ -66,11 +66,12 @@ func (s *slaverAgent) serve() {
 			s.newProxyTunnel(req)
 		case _EVENT_SA_SEND_DATA:
 			s.ctrl.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
+			logger.Debug(e.data.([]byte))
 			if _, err := s.ctrl.Write(e.data.([]byte)); err != nil {
 				logger.Error(err)
 			}
 		case _EVENT_SA_NEW_PTUNNEL_CONN:
-			req := e.data.(ptunnelConnReq)
+			req := e.data.(*ptunnelConnReq)
 			s.waitingTunnels[req.tid] = req.t
 		case _EVENT_SA_PTUNNEL_CONN_ACK:
 			req := e.data.(*tunnelConnAckReq)
@@ -100,6 +101,7 @@ func (s *slaverAgent) newProxyTunnel(req *buildTunnelReq) {
 	if err != nil {
 		return
 	}
+	go pTunnel.serve()
 	s.pTunnels[req.MAddr] = pTunnel
 }
 

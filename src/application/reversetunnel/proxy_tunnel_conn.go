@@ -1,6 +1,8 @@
 package reversetunnel
 
 import (
+	"bytes"
+	"encoding/binary"
 	"io"
 	"net"
 )
@@ -22,6 +24,13 @@ type mProxyTunnelConn struct {
 	ch    chan *channelEvent
 }
 
+type sProxyTunnelConn struct {
+	mConn net.Conn
+	sConn net.Conn
+	tid   uint64
+	sChan chan *channelEvent
+}
+
 func newMProxyTunnelConn(conn net.Conn, ptChan chan *channelEvent) (
 	c *mProxyTunnelConn) {
 	return &mProxyTunnelConn{
@@ -31,6 +40,56 @@ func newMProxyTunnelConn(conn net.Conn, ptChan chan *channelEvent) (
 		ch:     make(chan *channelEvent, _CHANNEL_SIZE),
 		status: _PTC_STATUS_WAITING,
 	}
+}
+
+func newSProxyTunnelConn(info *mProxyTunnelConnInfo,
+	s *slaverServer) (c *sProxyTunnelConn, err error) {
+	c = &sProxyTunnelConn{
+		tid:   info.tid,
+		sChan: s.ch,
+	}
+	defer func() {
+		if err != nil {
+			c.Close()
+		}
+	}()
+
+	if c.mConn, err = net.Dial("tcp", info.mAddr.String()); err != nil {
+		return
+	}
+
+	buf := new(bytes.Buffer)
+	buf.Write([]byte{PROTO_VER, CMD_V1_BUILD_TUNNEL_ACK})
+	binary.Write(buf, binary.BigEndian, byte(len(s.name)))
+	buf.Write([]byte(s.name))
+	binary.Write(buf, binary.BigEndian, c.tid)
+
+	if c.sConn, err = net.Dial("tcp", info.sAddr.String()); err != nil {
+		return
+	}
+
+	return
+}
+
+func (c *sProxyTunnelConn) dataTransport() {
+	go io.Copy(c.mConn, c.sConn)
+	io.Copy(c.sConn, c.mConn)
+	c.terminate()
+}
+
+func (c *sProxyTunnelConn) Close() error {
+	if c.mConn != nil {
+		c.mConn.Close()
+	}
+	if c.sConn != nil {
+		c.sConn.Close()
+	}
+	return nil
+}
+
+func (c *sProxyTunnelConn) terminate() {
+	c.Close()
+	(&channelEvent{_EVENT_PTC_TERMINATE, nil}).sendTo(c.sChan)
 }
 
 func (c *mProxyTunnelConn) Close() error {
@@ -78,5 +137,7 @@ end:
 }
 
 func (c *mProxyTunnelConn) terminate() {
+	c.Close()
+	(&channelEvent{_EVENT_PTC_TERMINATE, nil}).sendTo(c.tChan)
 	waitForChanClean(c.ch)
 }
