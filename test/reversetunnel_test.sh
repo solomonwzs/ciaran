@@ -11,6 +11,9 @@ BIN="${DIR}/../bin/reversetunnel.goc"
 MASTER_CONF="${DIR}/../conf/reversetunnel-master-example.json"
 SLAVER_CONF="${DIR}/../conf/reversetunnel-slaver-example.json"
 
+nc -klp 3801 &
+npid=$!
+
 "$BIN" -f "$MASTER_CONF" &
 mpid=$!
 sleep 1
@@ -20,6 +23,7 @@ spid=$!
 sleep 1
 
 function end() {
+    kill $npid
     kill $spid
     kill $mpid
 }

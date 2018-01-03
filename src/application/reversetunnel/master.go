@@ -18,9 +18,12 @@ const (
 	_EVENT_S_ERROR
 	_EVENT_S_CONN_ERROR
 	_EVENT_S_CMD_ERROR
-	_EVENT_S_PT_CONN_INFO
 	_EVENT_S_HEARTBEAT_ERROR
 	_EVENT_S_RECV_CMD_ERROR
+	_EVENT_S_SEND_DATA
+	_EVENT_S_PT_CONN_INFO
+	_EVENT_S_PT_CONN_SUCC
+	_EVENT_S_PT_CONN_FAIL
 
 	_EVENT_SA_EVENT
 	_EVENT_SA_ERROR
@@ -41,6 +44,8 @@ const (
 	_EVENT_PTC_CLOSE
 	_EVENT_PTC_TRANS_END
 	_EVENT_PTC_TERMINATE
+
+	_EVENT_SEND_DATA_ERR
 )
 
 const _CHANNEL_SIZE = 100
@@ -105,6 +110,16 @@ func waitForChanClean(ch chan *channelEvent) {
 			}
 		case <-end:
 			return
+		}
+	}
+}
+
+func sendData(ctrl net.Conn, bytesCh chan []byte,
+	ch chan *channelEvent) {
+	for d := range bytesCh {
+		ctrl.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
+		if _, err := ctrl.Write(d); err != nil {
+			(&channelEvent{_EVENT_SEND_DATA_ERR, err}).sendTo(ch)
 		}
 	}
 }

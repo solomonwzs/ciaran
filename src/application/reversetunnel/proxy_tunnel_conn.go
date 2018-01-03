@@ -65,7 +65,10 @@ func newSProxyTunnelConn(info *mProxyTunnelConnInfo,
 	binary.Write(buf, binary.BigEndian, c.tid)
 
 	if c.sConn, err = net.Dial("tcp", info.sAddr.String()); err != nil {
+		buf.WriteByte(REP_ERR_CONN_REFUSED)
 		return
+	} else {
+		buf.WriteByte(REP_SUCCEEDS)
 	}
 
 	return

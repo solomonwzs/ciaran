@@ -1,3 +1,4 @@
 *.swp
-bin/*
+bin
 src/main.go
+pkg

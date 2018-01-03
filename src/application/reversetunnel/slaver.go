@@ -22,6 +22,7 @@ type slaverServer struct {
 	masterAddr string
 	name       string
 	ch         chan *channelEvent
+	bytesCh    chan []byte
 	conns      map[uint64]*sProxyTunnelConn
 }
 
@@ -29,19 +30,16 @@ func newSlaverServer(conf *config) *slaverServer {
 	s := &slaverServer{
 		masterAddr: conf.JoinAddr,
 		name:       conf.Name,
-		ch:         make(chan *channelEvent, 10),
+		ch:         make(chan *channelEvent, _CHANNEL_SIZE),
+		bytesCh:    make(chan []byte, _CHANNEL_SIZE),
 		conns:      map[uint64]*sProxyTunnelConn{},
 	}
 	return s
 }
 
-func sendHeartbeat(conn net.Conn, ch chan *channelEvent) {
+func slaverHeartbeat(ch chan *channelEvent) {
 	for {
-		conn.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
-		if _, err := conn.Write(_BYTES_V1_HEARTBEAT); err != nil {
-			(&channelEvent{_EVENT_S_HEARTBEAT_ERROR, err}).sendTo(ch)
-			return
-		}
+		(&channelEvent{_EVENT_S_SEND_DATA, _BYTES_V1_HEARTBEAT}).sendTo(ch)
 		time.Sleep(_HEARTBEAT_DURATION)
 	}
 }
@@ -142,7 +140,9 @@ func (s *slaverServer) serve() {
 	if err != nil {
 		panic(err)
 	}
-	go sendHeartbeat(s.ctrl, s.ch)
+
+	go slaverHeartbeat(s.ch)
+	go sendData(s.ctrl, s.bytesCh, s.ch)
 	go recvCommand(s.ctrl, s.ch)
 
 	for e := range s.ch {
@@ -158,7 +158,10 @@ func (s *slaverServer) serve() {
 				continue
 			}
 			go c.dataTransport()
-		case _EVENT_S_HEARTBEAT_ERROR:
+		case _EVENT_S_SEND_DATA:
+			data := e.data.([]byte)
+			go func() { s.bytesCh <- data }()
+		case _EVENT_SEND_DATA_ERR:
 			logger.Error(e.data.(error))
 			goto end
 		case _EVENT_S_CMD_ERROR:
@@ -179,6 +182,7 @@ func runSlaver(s *slaverServer) {
 }
 
 func (s *slaverServer) terminate() {
+	close(s.bytesCh)
 	s.ctrl.Close()
 	waitForChanClean(s.ch)
 }

@@ -17,6 +17,7 @@ type slaverAgent struct {
 
 	ch         chan *channelEvent
 	masterChan chan *channelEvent
+	bytesCh    chan []byte
 }
 
 func newSlaverAgent(name string, conn net.Conn, tunnelAddr *address,
@@ -32,6 +33,7 @@ func newSlaverAgent(name string, conn net.Conn, tunnelAddr *address,
 		waitingTunnels: map[uint64]*mProxyTunnel{},
 
 		ch:         make(chan *channelEvent, _CHANNEL_SIZE),
+		bytesCh:    make(chan []byte, _CHANNEL_SIZE),
 		masterChan: ch,
 	}
 }
@@ -54,6 +56,7 @@ func recvHeartbeat(ctrl net.Conn, ch chan *channelEvent) {
 
 func (s *slaverAgent) serve() {
 	go recvHeartbeat(s.ctrl, s.ch)
+	go sendData(s.ctrl, s.bytesCh, s.ch)
 
 	for e := range s.ch {
 		switch e.typ {
@@ -65,11 +68,12 @@ func (s *slaverAgent) serve() {
 			req := e.data.(*buildTunnelReq)
 			s.newProxyTunnel(req)
 		case _EVENT_SA_SEND_DATA:
-			s.ctrl.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
-			logger.Debug(e.data.([]byte))
-			if _, err := s.ctrl.Write(e.data.([]byte)); err != nil {
-				logger.Error(err)
-			}
+			data := e.data.([]byte)
+			go func() { s.bytesCh <- data }()
+		case _EVENT_SEND_DATA_ERR:
+			err := e.data.(error)
+			logger.Error(err)
+			goto end
 		case _EVENT_SA_NEW_PTUNNEL_CONN:
 			req := e.data.(*ptunnelConnReq)
 			s.waitingTunnels[req.tid] = req.t
@@ -108,6 +112,8 @@ func (s *slaverAgent) newProxyTunnel(req *buildTunnelReq) {
 func (s *slaverAgent) terminate() {
 	(&channelEvent{_EVENT_SA_TERMINATE, s.name}).sendTo(s.masterChan)
 	s.ctrl.Close()
+
+	close(s.bytesCh)
 
 	shutdownEvent := &channelEvent{_EVENT_PT_SHUTDOWN, nil}
 	for _, pTunnel := range s.pTunnels {

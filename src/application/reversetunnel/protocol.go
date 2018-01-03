@@ -38,6 +38,7 @@ const (
 const (
 	REP_SUCCEEDS            = 0x00
 	REP_ERR_DUP_SLAVER_NAME = 0x01
+	REP_ERR_CONN_REFUSED    = 0x02
 )
 
 // After connected, slaver sends heartbeat to master,
