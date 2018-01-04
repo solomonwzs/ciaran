@@ -66,7 +66,6 @@ func (m *masterHttp) buildTunnelHandler(w http.ResponseWriter,
 		httpStatus = http.StatusBadRequest
 		return
 	}
-	logger.Debugf("%+v\n", req)
 	(&channelEvent{_EVENT_M_BUILD_TUNNEL_REQ, req}).sendTo(m.masterCh)
 
 	return

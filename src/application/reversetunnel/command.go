@@ -101,6 +101,7 @@ func parseBuildTunnelAckV1(r io.Reader) (
 		err = ErrIO
 		return
 	}
+	name = string(buf[:nameLen])
 
 	if err = binary.Read(r, binary.BigEndian, &tid); err != nil {
 		err = ErrIO

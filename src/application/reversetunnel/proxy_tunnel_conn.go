@@ -1,9 +1,8 @@
 package reversetunnel
 
 import (
-	"bytes"
-	"encoding/binary"
 	"io"
+	"logger"
 	"net"
 )
 
@@ -42,41 +41,10 @@ func newMProxyTunnelConn(conn net.Conn, ptChan chan *channelEvent) (
 	}
 }
 
-func newSProxyTunnelConn(info *mProxyTunnelConnInfo,
-	s *slaverServer) (c *sProxyTunnelConn, err error) {
-	c = &sProxyTunnelConn{
-		tid:   info.tid,
-		sChan: s.ch,
-	}
-	defer func() {
-		if err != nil {
-			c.Close()
-		}
-	}()
-
-	if c.mConn, err = net.Dial("tcp", info.mAddr.String()); err != nil {
-		return
-	}
-
-	buf := new(bytes.Buffer)
-	buf.Write([]byte{PROTO_VER, CMD_V1_BUILD_TUNNEL_ACK})
-	binary.Write(buf, binary.BigEndian, byte(len(s.name)))
-	buf.Write([]byte(s.name))
-	binary.Write(buf, binary.BigEndian, c.tid)
-
-	if c.sConn, err = net.Dial("tcp", info.sAddr.String()); err != nil {
-		buf.WriteByte(REP_ERR_CONN_REFUSED)
-		return
-	} else {
-		buf.WriteByte(REP_SUCCEEDS)
-	}
-
-	return
-}
-
 func (c *sProxyTunnelConn) dataTransport() {
 	go io.Copy(c.mConn, c.sConn)
 	io.Copy(c.sConn, c.mConn)
+	logger.Infof("slaver: conn end, tid: %d\n", c.tid)
 	c.terminate()
 }
 
@@ -92,7 +60,7 @@ func (c *sProxyTunnelConn) Close() error {
 
 func (c *sProxyTunnelConn) terminate() {
 	c.Close()
-	(&channelEvent{_EVENT_PTC_TERMINATE, nil}).sendTo(c.sChan)
+	(&channelEvent{_EVENT_PTC_TERMINATE, c.tid}).sendTo(c.sChan)
 }
 
 func (c *mProxyTunnelConn) Close() error {
@@ -108,6 +76,7 @@ func (c *mProxyTunnelConn) Close() error {
 func (c *mProxyTunnelConn) dataTransport() {
 	go io.Copy(c.mConn, c.sConn)
 	io.Copy(c.sConn, c.mConn)
+	logger.Infof("master: conn end, tid: %d\n", c.tid)
 	(&channelEvent{_EVENT_PTC_TRANS_END, nil}).sendTo(c.ch)
 }
 
@@ -141,6 +110,6 @@ end:
 
 func (c *mProxyTunnelConn) terminate() {
 	c.Close()
-	(&channelEvent{_EVENT_PTC_TERMINATE, nil}).sendTo(c.tChan)
+	(&channelEvent{_EVENT_PTC_TERMINATE, c.tid}).sendTo(c.tChan)
 	waitForChanClean(c.ch)
 }

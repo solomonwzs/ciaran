@@ -5,22 +5,7 @@ import (
 	"encoding/binary"
 	"logger"
 	"net"
-	"sync"
-	"time"
 )
-
-var (
-	_TID      = uint64(time.Now().UnixNano())
-	_TID_LOCK = sync.Mutex{}
-)
-
-func newTid() uint64 {
-	_TID_LOCK.Lock()
-	defer _TID_LOCK.Unlock()
-
-	_TID += 1
-	return _TID
-}
 
 type ptunnelConnReq struct {
 	tid uint64
@@ -67,25 +52,26 @@ func newMProxyTunnel(mAddr, sAddr *address, listenAddr string,
 	return
 }
 
-func listenClientConn(l net.Listener, ch chan *channelEvent) {
+func (pt *mProxyTunnel) listenClientConn() {
 	for {
-		if conn, err := l.Accept(); err != nil {
-			(&channelEvent{_EVENT_PT_ACCEPT_ERROR, err}).sendTo(ch)
+		if conn, err := pt.clientListener.Accept(); err != nil {
+			(&channelEvent{_EVENT_PT_ACCEPT_ERROR, err}).sendTo(pt.ch)
 			return
 		} else {
-			(&channelEvent{_EVENT_PT_NEW_PTUNNEL_CONN, conn}).sendTo(ch)
+			(&channelEvent{_EVENT_PT_NEW_PTUNNEL_CONN, conn}).sendTo(pt.ch)
 		}
 	}
 }
 
 func (pt *mProxyTunnel) serve() {
-	go listenClientConn(pt.clientListener, pt.ch)
+	go pt.listenClientConn()
 
 	for e := range pt.ch {
 		switch e.typ {
 		case _EVENT_PT_NEW_PTUNNEL_CONN:
 			conn := e.data.(net.Conn)
 			c := newMProxyTunnelConn(conn, pt.ch)
+			logger.Infof("master: new conn, tid: %d\n", c.tid)
 			go c.serve()
 			pt.ptConns[c.tid] = c
 			(&channelEvent{

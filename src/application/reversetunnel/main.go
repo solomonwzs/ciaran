@@ -31,8 +31,10 @@ func Main() {
 		m := newMasterServer(conf)
 		m.serve()
 	} else if conf.Role == "slaver" {
-		s := newSlaverServer(conf)
-		runSlaver(s)
+		for {
+			s := newSlaverServer(conf)
+			s.serve()
+		}
 	} else {
 		panic(fmt.Sprintf("unknown role %s", conf.Role))
 	}
