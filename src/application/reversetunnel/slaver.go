@@ -2,7 +2,6 @@ package reversetunnel
 
 import (
 	"bytes"
-	"encoding/binary"
 	"logger"
 	"net"
 	"time"
@@ -18,7 +17,7 @@ type slaverServer struct {
 	name       string
 	ch         chan *channelEvent
 	bytesCh    chan []byte
-	conns      map[uint64]*sProxyTunnelConn
+	conns      map[connectionid]*proxyTunnelConn
 }
 
 func newSlaverServer(conf *config) *slaverServer {
@@ -27,7 +26,7 @@ func newSlaverServer(conf *config) *slaverServer {
 		name:       conf.Name,
 		ch:         make(chan *channelEvent, _CHANNEL_SIZE),
 		bytesCh:    make(chan []byte, _CHANNEL_SIZE),
-		conns:      map[uint64]*sProxyTunnelConn{},
+		conns:      map[connectionid]*proxyTunnelConn{},
 	}
 	return s
 }
@@ -117,9 +116,9 @@ func (s *slaverServer) recvCommand() {
 
 		switch cmd {
 		case CMD_V1_BUILD_TUNNEL:
-			info := new(mProxyTunnelConnInfo)
+			info := new(proxyTunnelConnInfo)
 			s.ctrl.SetReadDeadline(time.Now().Add(_NETWORK_TIMEOUT))
-			info.mAddr, info.sAddr, info.tid, err = parseBuildTunnelV1(
+			info.mAddr, info.sAddr, info.cid, err = parseBuildTunnelV1(
 				s.ctrl)
 			if err != nil {
 				(&channelEvent{_EVENT_S_CMD_ERROR, err}).sendTo(s.ch)
@@ -146,16 +145,23 @@ func (s *slaverServer) serve() {
 			logger.Error(e.data.(error))
 			goto end
 		case _EVENT_S_PT_CONN_INFO:
-			info := e.data.(*mProxyTunnelConnInfo)
-			go s.startSProxyTunnelConn(info)
-		case _EVENT_S_PT_CONN_SUCC:
-			c := e.data.(*sProxyTunnelConn)
-			logger.Infof("slaver: new conn, tid: %d\n", c.tid)
-			s.conns[c.tid] = c
-			go c.dataTransport()
-		case _EVENT_S_PT_CONN_FAIL:
+			info := e.data.(*proxyTunnelConnInfo)
+			go asyncNewReadyProxyTunnelConn(info, s.name, s.ch)
+		case _EVENT_PTC_READY:
+			c := e.data.(*proxyTunnelConn)
+			logger.Infof("slaver: new conn, cid: %d\n", c.cid)
+			s.conns[c.cid] = c
+			go c.serve()
+			(&channelEvent{_EVENT_PTC_TRANS_START, nil}).sendTo(c.ch)
+		case _EVENT_PTC_READY_FAIL:
 			err := e.data.(error)
 			logger.Errorf("slaver: new conn error: %s\n", err)
+		case _EVENT_PTC_TERMINATE:
+			cid := e.data.(connectionid)
+			if _, exist := s.conns[cid]; exist {
+				logger.Infof("slaver: end conn, cid: %d\n", cid)
+				delete(s.conns, cid)
+			}
 		case _EVENT_S_SEND_DATA:
 			data := e.data.([]byte)
 			go func() { s.bytesCh <- data }()
@@ -173,49 +179,14 @@ end:
 	s.terminate()
 }
 
-func (s *slaverServer) startSProxyTunnelConn(info *mProxyTunnelConnInfo) {
-	var (
-		err error = nil
-		c   *sProxyTunnelConn
-	)
-	defer func() {
-		if err != nil {
-			c.Close()
-			(&channelEvent{_EVENT_S_PT_CONN_FAIL, err}).sendTo(s.ch)
-		} else {
-			(&channelEvent{_EVENT_S_PT_CONN_SUCC, c}).sendTo(s.ch)
-		}
-	}()
-
-	c = &sProxyTunnelConn{
-		tid:   info.tid,
-		sChan: s.ch,
-	}
-
-	if c.mConn, err = net.Dial("tcp", info.mAddr.String()); err != nil {
-		return
-	}
-
-	buf := new(bytes.Buffer)
-	buf.Write([]byte{PROTO_VER, CMD_V1_BUILD_TUNNEL_ACK})
-	binary.Write(buf, binary.BigEndian, byte(len(s.name)))
-	buf.Write([]byte(s.name))
-	binary.Write(buf, binary.BigEndian, c.tid)
-
-	if c.sConn, err = net.Dial("tcp", info.sAddr.String()); err != nil {
-		buf.WriteByte(REP_ERR_CONN_REFUSED)
-	} else {
-		buf.WriteByte(REP_SUCCEEDS)
-	}
-
-	c.mConn.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
-	defer c.mConn.SetWriteDeadline(time.Time{})
-
-	_, err = c.mConn.Write(buf.Bytes())
-}
-
 func (s *slaverServer) terminate() {
 	close(s.bytesCh)
 	s.ctrl.Close()
+
+	e := (&channelEvent{_EVENT_PTC_CLOSE, nil})
+	for _, c := range s.conns {
+		e.sendTo(c.ch)
+	}
+
 	waitForChanClean(s.ch)
 }

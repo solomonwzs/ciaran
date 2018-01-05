@@ -1,54 +1,85 @@
 package reversetunnel
 
 import (
+	"bytes"
+	"encoding/binary"
 	"io"
-	"logger"
 	"net"
+	"time"
 )
 
 const (
 	_PTC_STATUS_WAITING = iota
+	_PTC_STATUS_READY
 	_PTC_STATUS_TRANSPORT
 	_PTC_STATUS_CLOSE
 )
 
-type mProxyTunnelConn struct {
+type proxyTunnelConn struct {
 	mConn net.Conn
 	sConn net.Conn
 
-	tid    uint64
+	cid    connectionid
 	status int
 
-	tChan chan *channelEvent
-	ch    chan *channelEvent
+	superiorChan chan *channelEvent
+	ch           chan *channelEvent
 }
 
-type sProxyTunnelConn struct {
-	mConn net.Conn
-	sConn net.Conn
-	tid   uint64
-	sChan chan *channelEvent
-}
-
-func newMProxyTunnelConn(conn net.Conn, ptChan chan *channelEvent) (
-	c *mProxyTunnelConn) {
-	return &mProxyTunnelConn{
-		mConn:  conn,
-		tid:    newTid(),
-		tChan:  ptChan,
-		ch:     make(chan *channelEvent, _CHANNEL_SIZE),
-		status: _PTC_STATUS_WAITING,
+func newWaitingProxyTunnelConn(conn net.Conn, ptChan chan *channelEvent,
+	cid connectionid) (c *proxyTunnelConn) {
+	return &proxyTunnelConn{
+		mConn:        conn,
+		cid:          cid,
+		superiorChan: ptChan,
+		ch:           make(chan *channelEvent, _CHANNEL_SIZE),
+		status:       _PTC_STATUS_WAITING,
 	}
 }
 
-func (c *sProxyTunnelConn) dataTransport() {
-	go io.Copy(c.mConn, c.sConn)
-	io.Copy(c.sConn, c.mConn)
-	logger.Infof("slaver: conn end, tid: %d\n", c.tid)
-	c.terminate()
+func asyncNewReadyProxyTunnelConn(info *proxyTunnelConnInfo,
+	slaverName string, ch chan *channelEvent) {
+	var err error = nil
+	c := &proxyTunnelConn{
+		cid:          info.cid,
+		ch:           make(chan *channelEvent, _CHANNEL_SIZE),
+		superiorChan: ch,
+		status:       _PTC_STATUS_READY,
+	}
+	defer func() {
+		if err != nil {
+			c.Close()
+			(&channelEvent{_EVENT_PTC_READY_FAIL, err}).sendTo(ch)
+		} else {
+			(&channelEvent{_EVENT_PTC_READY, c}).sendTo(ch)
+		}
+	}()
+
+	if c.mConn, err = net.Dial("tcp", info.mAddr.String()); err != nil {
+		return
+	}
+
+	buf := new(bytes.Buffer)
+	buf.Write([]byte{PROTO_VER, CMD_V1_BUILD_TUNNEL_ACK})
+	binary.Write(buf, binary.BigEndian, byte(len(slaverName)))
+	buf.Write([]byte(slaverName))
+	binary.Write(buf, binary.BigEndian, c.cid)
+
+	if c.sConn, err = net.Dial("tcp", info.sAddr.String()); err != nil {
+		buf.WriteByte(REP_ERR_CONN_REFUSED)
+	} else {
+		buf.WriteByte(REP_SUCCEEDS)
+	}
+
+	c.mConn.SetWriteDeadline(time.Now().Add(_NETWORK_TIMEOUT))
+	defer c.mConn.SetWriteDeadline(time.Time{})
+
+	if _, err0 := c.mConn.Write(buf.Bytes()); err == nil && err0 != nil {
+		err = err0
+	}
 }
 
-func (c *sProxyTunnelConn) Close() error {
+func (c *proxyTunnelConn) Close() error {
 	if c.mConn != nil {
 		c.mConn.Close()
 	}
@@ -58,48 +89,38 @@ func (c *sProxyTunnelConn) Close() error {
 	return nil
 }
 
-func (c *sProxyTunnelConn) terminate() {
-	c.Close()
-	(&channelEvent{_EVENT_PTC_TERMINATE, c.tid}).sendTo(c.sChan)
-}
-
-func (c *mProxyTunnelConn) Close() error {
-	if c.mConn != nil {
-		c.mConn.Close()
-	}
-	if c.sConn != nil {
-		c.sConn.Close()
-	}
-	return nil
-}
-
-func (c *mProxyTunnelConn) dataTransport() {
+func (c *proxyTunnelConn) dataTransport() {
 	go io.Copy(c.mConn, c.sConn)
 	io.Copy(c.sConn, c.mConn)
-	logger.Infof("master: conn end, tid: %d\n", c.tid)
 	(&channelEvent{_EVENT_PTC_TRANS_END, nil}).sendTo(c.ch)
 }
 
-func (c *mProxyTunnelConn) serve() {
+func (c *proxyTunnelConn) serve() {
 	for e := range c.ch {
 		switch e.typ {
 		case _EVENT_PTC_PTUNNEL_CONN_ACK:
 			if c.status == _PTC_STATUS_WAITING {
+				if e.data == nil {
+					goto end
+				}
+
 				c.sConn = e.data.(net.Conn)
+				c.status = _PTC_STATUS_TRANSPORT
+				go c.dataTransport()
+			}
+		case _EVENT_PTC_TRANS_START:
+			if c.status == _PTC_STATUS_READY {
 				c.status = _PTC_STATUS_TRANSPORT
 				go c.dataTransport()
 			}
 		case _EVENT_PTC_TRANS_END:
 			if c.status == _PTC_STATUS_TRANSPORT {
 				c.status = _PTC_STATUS_CLOSE
-				(&channelEvent{_EVENT_PTC_TERMINATE, c.tid}).sendTo(
-					c.tChan)
 			}
 			goto end
 		case _EVENT_PTC_CLOSE:
 			if c.status == _PTC_STATUS_TRANSPORT {
 				c.status = _PTC_STATUS_CLOSE
-				c.Close()
 			}
 			goto end
 		}
@@ -108,8 +129,8 @@ end:
 	c.terminate()
 }
 
-func (c *mProxyTunnelConn) terminate() {
+func (c *proxyTunnelConn) terminate() {
 	c.Close()
-	(&channelEvent{_EVENT_PTC_TERMINATE, c.tid}).sendTo(c.tChan)
+	(&channelEvent{_EVENT_PTC_TERMINATE, c.cid}).sendTo(c.superiorChan)
 	waitForChanClean(c.ch)
 }

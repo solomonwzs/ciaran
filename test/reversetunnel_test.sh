@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+# set -euo pipefail
 
 echo -e "\033[01;32m[Test]\033[0m Reversetunnel Test ... "
 
@@ -31,12 +31,14 @@ function end() {
 trap "end; exit" SIGINT SIGTERM
 
 function build_tunnel_req() {
-    curl -X${METHOD} -T"${DIR}/../example/reversetunnel/build-tunnel.json" \
+    curl -X${METHOD} \
+        -T"${DIR}/../example/reversetunnel/build-tunnel.json" \
         "${MASTER_ADDR}/tunnel"
 }
 
 build_tunnel_req
-echo "hello" | nc 127.0.0.1 3800 -q 0
+echo ">> hello" | nc 127.0.0.1 3800 -q 0
+echo ">> world" | nc 127.0.0.1 3800 -q 0
 
 echo -ne "\033[01;32m[Test]\033[0m Press any keys to exit ... "
 read -r -n 1 -s var

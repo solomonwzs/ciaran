@@ -9,7 +9,7 @@ import (
 )
 
 type tunnelConnAckReq struct {
-	tid       uint64
+	cid       connectionid
 	agentName string
 	net.Conn
 }
@@ -110,16 +110,22 @@ func (m *masterServer) listenTunnelConn() {
 			} else if cmd != CMD_V1_BUILD_TUNNEL_ACK {
 				logger.Error("error: command")
 				conn.Close()
-			} else if name, tid, err := parseBuildTunnelAckV1(
-				conn); err != nil {
+			} else if name, cid, err := parseBuildTunnelAckV1(
+				conn); err != nil && err != ErrReply {
 				logger.Error(err)
 				conn.Close()
 			} else {
-				conn.SetReadDeadline(time.Time{})
+				conn0 := conn
+				if err == nil {
+					conn.SetReadDeadline(time.Time{})
+				} else {
+					conn.Close()
+					conn0 = nil
+				}
 				req := &tunnelConnAckReq{
-					tid:       tid,
+					cid:       cid,
 					agentName: name,
-					Conn:      conn,
+					Conn:      conn0,
 				}
 				(&channelEvent{_EVENT_M_PTUNNEL_CONN_ACK, req}).sendTo(m.ch)
 			}

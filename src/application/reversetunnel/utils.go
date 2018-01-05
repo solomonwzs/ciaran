@@ -21,10 +21,7 @@ const (
 	_EVENT_S_RECV_CMD_ERROR
 	_EVENT_S_SEND_DATA
 	_EVENT_S_PT_CONN_INFO
-	_EVENT_S_PT_CONN_SUCC
-	_EVENT_S_PT_CONN_FAIL
 
-	_EVENT_SA_EVENT
 	_EVENT_SA_ERROR
 	_EVENT_SA_BUILD_TUNNEL_REQ
 	_EVENT_SA_SEND_DATA
@@ -41,6 +38,9 @@ const (
 
 	_EVENT_PTC_PTUNNEL_CONN_ACK
 	_EVENT_PTC_CLOSE
+	_EVENT_PTC_READY
+	_EVENT_PTC_READY_FAIL
+	_EVENT_PTC_TRANS_START
 	_EVENT_PTC_TRANS_END
 	_EVENT_PTC_TERMINATE
 
@@ -49,28 +49,30 @@ const (
 
 const _CHANNEL_SIZE = 100
 
+type connectionid uint32
+
 var (
 	_HEARTBEAT_DURATION = 2 * time.Second
 	_NETWORK_TIMEOUT    = 4 * time.Second
 )
 
 var (
-	_TID      = uint64(time.Now().UnixNano())
-	_TID_LOCK = sync.Mutex{}
+	_CID      = connectionid(0)
+	_CID_LOCK = sync.Mutex{}
 )
 
-func newTid() uint64 {
-	_TID_LOCK.Lock()
-	defer _TID_LOCK.Unlock()
+func newCid() connectionid {
+	_CID_LOCK.Lock()
+	defer _CID_LOCK.Unlock()
 
-	_TID += 1
-	return _TID
+	_CID += 1
+	return _CID
 }
 
-type mProxyTunnelConnInfo struct {
+type proxyTunnelConnInfo struct {
 	mAddr *address
 	sAddr *address
-	tid   uint64
+	cid   connectionid
 }
 
 type channelEvent struct {

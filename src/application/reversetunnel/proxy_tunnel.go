@@ -7,35 +7,39 @@ import (
 	"net"
 )
 
+type genCid func() connectionid
+
 type ptunnelConnReq struct {
-	tid uint64
-	t   *mProxyTunnel
+	cid connectionid
+	t   *proxyTunnel
 }
 
-type mProxyTunnel struct {
+type proxyTunnel struct {
 	clientListener net.Listener
 	listenAddr     string
 	mAddr          *address
 	sAddr          *address
 	tunnelCmdPre   []byte
+	gcid           genCid
 
 	ch        chan *channelEvent
 	agentChan chan *channelEvent
 
-	ptConns map[uint64]*mProxyTunnelConn
+	ptConns map[connectionid]*proxyTunnelConn
 }
 
-func newMProxyTunnel(mAddr, sAddr *address, listenAddr string,
-	agentChan chan *channelEvent) (pt *mProxyTunnel, err error) {
-	pt = &mProxyTunnel{
+func newProxyTunnel(mAddr, sAddr *address, listenAddr string,
+	agentChan chan *channelEvent, g genCid) (pt *proxyTunnel, err error) {
+	pt = &proxyTunnel{
 		listenAddr: listenAddr,
 		mAddr:      mAddr,
 		sAddr:      sAddr,
+		gcid:       g,
 
 		ch:        make(chan *channelEvent, _CHANNEL_SIZE),
 		agentChan: agentChan,
 
-		ptConns: map[uint64]*mProxyTunnelConn{},
+		ptConns: map[connectionid]*proxyTunnelConn{},
 	}
 
 	buf := new(bytes.Buffer)
@@ -52,7 +56,7 @@ func newMProxyTunnel(mAddr, sAddr *address, listenAddr string,
 	return
 }
 
-func (pt *mProxyTunnel) listenClientConn() {
+func (pt *proxyTunnel) listenClientConn() {
 	for {
 		if conn, err := pt.clientListener.Accept(); err != nil {
 			(&channelEvent{_EVENT_PT_ACCEPT_ERROR, err}).sendTo(pt.ch)
@@ -63,29 +67,29 @@ func (pt *mProxyTunnel) listenClientConn() {
 	}
 }
 
-func (pt *mProxyTunnel) serve() {
+func (pt *proxyTunnel) serve() {
 	go pt.listenClientConn()
 
 	for e := range pt.ch {
 		switch e.typ {
 		case _EVENT_PT_NEW_PTUNNEL_CONN:
 			conn := e.data.(net.Conn)
-			c := newMProxyTunnelConn(conn, pt.ch)
-			logger.Infof("master: new conn, tid: %d\n", c.tid)
+			c := newWaitingProxyTunnelConn(conn, pt.ch, pt.gcid())
+			logger.Infof("master: new conn, cid: %d\n", c.cid)
 			go c.serve()
-			pt.ptConns[c.tid] = c
+			pt.ptConns[c.cid] = c
 			(&channelEvent{
 				_EVENT_SA_NEW_PTUNNEL_CONN,
-				&ptunnelConnReq{c.tid, pt}}).sendTo(pt.agentChan)
+				&ptunnelConnReq{c.cid, pt}}).sendTo(pt.agentChan)
 
 			buf := new(bytes.Buffer)
 			buf.Write(pt.tunnelCmdPre)
-			binary.Write(buf, binary.BigEndian, c.tid)
+			binary.Write(buf, binary.BigEndian, c.cid)
 			(&channelEvent{_EVENT_SA_SEND_DATA, buf.Bytes()}).sendTo(
 				pt.agentChan)
 		case _EVENT_PT_PTUNNEL_CONN_ACK:
 			req := e.data.(*tunnelConnAckReq)
-			if c, exist := pt.ptConns[req.tid]; exist {
+			if c, exist := pt.ptConns[req.cid]; exist {
 				(&channelEvent{
 					_EVENT_PTC_PTUNNEL_CONN_ACK,
 					req.Conn}).sendTo(c.ch)
@@ -93,22 +97,24 @@ func (pt *mProxyTunnel) serve() {
 				req.Close()
 			}
 		case _EVENT_PTC_TERMINATE:
-			tid := e.data.(uint64)
-			if _, exist := pt.ptConns[tid]; exist {
-				delete(pt.ptConns, tid)
+			cid := e.data.(connectionid)
+			if _, exist := pt.ptConns[cid]; exist {
+				logger.Infof("master: end conn, cid: %d\n", cid)
+				delete(pt.ptConns, cid)
 			}
 		case _EVENT_PT_ACCEPT_ERROR:
 			logger.Error(e.data.(error))
 			goto end
 		case _EVENT_PT_SHUTDOWN:
 			goto end
+		default:
 		}
 	}
 end:
 	pt.terminate()
 }
 
-func (pt *mProxyTunnel) terminate() {
+func (pt *proxyTunnel) terminate() {
 	(&channelEvent{_EVENT_PT_TERMINATE, pt}).sendTo(pt.agentChan)
 	pt.clientListener.Close()
 

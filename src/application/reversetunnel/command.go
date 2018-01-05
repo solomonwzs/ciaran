@@ -49,7 +49,7 @@ func parseJoinAckV1(r io.Reader) (rep byte, err error) {
 }
 
 func parseBuildTunnelV1(r io.Reader) (
-	mAddr, sAddr *address, tid uint64, err error) {
+	mAddr, sAddr *address, cid connectionid, err error) {
 	buf := make([]byte, 8, 8)
 
 	addrs := []*address{new(address), new(address)}
@@ -77,16 +77,16 @@ func parseBuildTunnelV1(r io.Reader) (
 			addrs[i].atype = buf[0]
 		}
 	}
-	if err = binary.Read(r, binary.BigEndian, &tid); err != nil {
+	if err = binary.Read(r, binary.BigEndian, &cid); err != nil {
 		err = ErrIO
 		return
 	}
 
-	return addrs[0], addrs[1], tid, nil
+	return addrs[0], addrs[1], cid, nil
 }
 
 func parseBuildTunnelAckV1(r io.Reader) (
-	name string, tid uint64, err error) {
+	name string, cid connectionid, err error) {
 	buf := make([]byte, 64, 64)
 	if _, err = io.ReadFull(r, buf[:1]); err != nil {
 		err = ErrIO
@@ -103,7 +103,7 @@ func parseBuildTunnelAckV1(r io.Reader) (
 	}
 	name = string(buf[:nameLen])
 
-	if err = binary.Read(r, binary.BigEndian, &tid); err != nil {
+	if err = binary.Read(r, binary.BigEndian, &cid); err != nil {
 		err = ErrIO
 		return
 	}

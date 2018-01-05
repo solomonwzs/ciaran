@@ -3,6 +3,7 @@ package reversetunnel
 import (
 	"logger"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -12,12 +13,15 @@ type slaverAgent struct {
 	tunnelAddr *address
 	ctrl       net.Conn
 
-	pTunnels       map[string]*mProxyTunnel
-	waitingTunnels map[uint64]*mProxyTunnel
+	pTunnels       map[string]*proxyTunnel
+	waitingTunnels map[connectionid]*proxyTunnel
 
 	ch         chan *channelEvent
 	masterChan chan *channelEvent
 	bytesCh    chan []byte
+
+	currentCid connectionid
+	cidLock    *sync.Mutex
 }
 
 func newSlaverAgent(name string, conn net.Conn, tunnelAddr *address,
@@ -29,13 +33,25 @@ func newSlaverAgent(name string, conn net.Conn, tunnelAddr *address,
 		tunnelAddr: tunnelAddr,
 		ctrl:       conn,
 
-		pTunnels:       map[string]*mProxyTunnel{},
-		waitingTunnels: map[uint64]*mProxyTunnel{},
+		pTunnels:       map[string]*proxyTunnel{},
+		waitingTunnels: map[connectionid]*proxyTunnel{},
 
 		ch:         make(chan *channelEvent, _CHANNEL_SIZE),
 		bytesCh:    make(chan []byte, _CHANNEL_SIZE),
 		masterChan: ch,
+
+		currentCid: 1,
+		cidLock:    &sync.Mutex{},
 	}
+}
+
+func (sa *slaverAgent) newCid() connectionid {
+	sa.cidLock.Lock()
+	defer sa.cidLock.Unlock()
+
+	cid := sa.currentCid
+	sa.currentCid += 1
+	return cid
 }
 
 func (sa *slaverAgent) recvHeartbeat() {
@@ -76,19 +92,20 @@ func (sa *slaverAgent) serve() {
 			goto end
 		case _EVENT_SA_NEW_PTUNNEL_CONN:
 			req := e.data.(*ptunnelConnReq)
-			sa.waitingTunnels[req.tid] = req.t
+			sa.waitingTunnels[req.cid] = req.t
 		case _EVENT_SA_PTUNNEL_CONN_ACK:
 			req := e.data.(*tunnelConnAckReq)
-			if t, exist := sa.waitingTunnels[req.tid]; exist {
-				delete(sa.waitingTunnels, req.tid)
+			if t, exist := sa.waitingTunnels[req.cid]; exist {
+				delete(sa.waitingTunnels, req.cid)
 				(&channelEvent{_EVENT_PT_PTUNNEL_CONN_ACK, req}).sendTo(t.ch)
 			}
 		case _EVENT_PT_TERMINATE:
-			pt := e.data.(*mProxyTunnel)
+			pt := e.data.(*proxyTunnel)
 			delete(sa.pTunnels, pt.listenAddr)
-			for tid, _ := range pt.ptConns {
-				delete(sa.waitingTunnels, tid)
+			for cid, _ := range pt.ptConns {
+				delete(sa.waitingTunnels, cid)
 			}
+		default:
 		}
 	}
 end:
@@ -101,7 +118,8 @@ func (sa *slaverAgent) newProxyTunnel(req *buildTunnelReq) {
 	if sAddr == nil {
 		return
 	}
-	pTunnel, err := newMProxyTunnel(sa.tunnelAddr, sAddr, req.MAddr, sa.ch)
+	pTunnel, err := newProxyTunnel(sa.tunnelAddr, sAddr, req.MAddr,
+		sa.ch, sa.newCid)
 	if err != nil {
 		return
 	}
