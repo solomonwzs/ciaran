@@ -81,9 +81,7 @@ type channelEvent struct {
 }
 
 func (e *channelEvent) sendTo(ch chan *channelEvent) {
-	go func() {
-		ch <- e
-	}()
+	ch <- e
 }
 
 type address struct {
