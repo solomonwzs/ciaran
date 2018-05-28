@@ -1,10 +1,11 @@
 package reversetunnel
 
 import (
-	"logger"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/solomonwzs/goxutil/logger"
 )
 
 type slaverAgent struct {

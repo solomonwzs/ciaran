@@ -3,8 +3,9 @@ package reversetunnel
 import (
 	"bytes"
 	"encoding/binary"
-	"logger"
 	"net"
+
+	"github.com/solomonwzs/goxutil/logger"
 )
 
 type genCid func() connectionid

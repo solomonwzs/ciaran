@@ -5,9 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"logger"
 	"net"
 	"time"
+
+	"github.com/solomonwzs/goxutil/logger"
 )
 
 func setTimeout(conn net.Conn, d time.Duration) error {
@@ -15,7 +16,9 @@ func setTimeout(conn net.Conn, d time.Duration) error {
 }
 
 func Main() {
-	logger.AddLogger("default", nil)
+	logger.NewLogger(func(r *logger.Record) {
+		fmt.Printf("%s", r)
+	})
 
 	confFile := flag.String("f", "", "config file")
 	flag.Parse()

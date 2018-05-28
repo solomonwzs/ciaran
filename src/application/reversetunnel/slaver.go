@@ -2,9 +2,10 @@ package reversetunnel
 
 import (
 	"bytes"
-	"logger"
 	"net"
 	"time"
+
+	"github.com/solomonwzs/goxutil/logger"
 )
 
 var (

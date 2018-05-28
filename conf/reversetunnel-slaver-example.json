@@ -8,5 +8,5 @@
     "name": "slaver-0",
 
     "//": "master address",
-    "join": "127.0.0.1:18083"
+    "join": "127.0.0.1:18073"
 }

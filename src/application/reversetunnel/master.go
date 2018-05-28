@@ -2,10 +2,11 @@ package reversetunnel
 
 import (
 	"fmt"
-	"logger"
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/solomonwzs/goxutil/logger"
 )
 
 type tunnelConnAckReq struct {

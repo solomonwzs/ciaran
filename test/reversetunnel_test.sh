@@ -3,7 +3,7 @@
 
 echo -e "\033[01;32m[Test]\033[0m Reversetunnel Test ... "
 
-MASTER_ADDR="http://127.0.0.1:18082"
+MASTER_ADDR="http://127.0.0.1:18072"
 METHOD="POST"
 DIR=$(dirname $0)
 

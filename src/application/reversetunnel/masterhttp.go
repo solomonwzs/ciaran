@@ -3,9 +3,10 @@ package reversetunnel
 import (
 	"encoding/json"
 	"io/ioutil"
-	"logger"
 	"net/http"
 	"runtime/debug"
+
+	"github.com/solomonwzs/goxutil/logger"
 )
 
 type buildTunnelReq struct {
