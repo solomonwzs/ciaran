@@ -2,9 +2,10 @@ package socks5
 
 import (
 	"io"
-	"logger"
 	"net"
 	"strconv"
+
+	"github.com/solomonwzs/goxutil/logger"
 )
 
 var (

@@ -1,13 +1,17 @@
 package socks5proxy
 
 import (
-	"logger"
+	"fmt"
 	"net"
 	"relay/socks5"
+
+	"github.com/solomonwzs/goxutil/logger"
 )
 
 func Main() {
-	logger.AddLogger("default", nil)
+	logger.NewLogger(func(r *logger.Record) {
+		fmt.Printf("%s", r)
+	})
 
 	l, err := net.Listen("tcp", ":18081")
 	if err != nil {
