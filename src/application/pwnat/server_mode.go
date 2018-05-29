@@ -17,7 +17,7 @@ func serverRun() {
 	defer conn.Close()
 
 	for {
-		_, err = conn.Write(_FAKE_ICMP_BYTES)
+		_, err = conn.Write(_PSEUDO_ICMP_BYTES)
 		if err != nil {
 			panic(err)
 		}

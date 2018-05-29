@@ -23,7 +23,7 @@ func clientRun(remoteHost string) {
 	ipH := &network.IPv4Header{
 		Version:    4,
 		TOS:        0,
-		Length:     network.SIZEOF_IPV4_HEADER + uint16(len(_FAKE_ICMP_BYTES)),
+		Length:     network.SIZEOF_IPV4_HEADER + uint16(len(_PSEUDO_ICMP_BYTES)),
 		Id:         0,
 		Flags:      network.IPV4_FLAG_DONT_FRAG,
 		FragOffset: 0,
@@ -32,8 +32,8 @@ func clientRun(remoteHost string) {
 		SrcAddr:    localIP,
 		DstAddr:    _UNREACHABLE_IP,
 	}
-	fakePacket, _ := ipH.Marshal()
-	fakePacket = append(fakePacket, _FAKE_ICMP_BYTES...)
+	pseudoPacket, _ := ipH.Marshal()
+	pseudoPacket = append(pseudoPacket, _PSEUDO_ICMP_BYTES...)
 
 	conn, err := net.Dial("ip4:icmp", remoteHost)
 	if err != nil {
@@ -51,7 +51,7 @@ func clientRun(remoteHost string) {
 	buf := new(bytes.Buffer)
 	buf.Write(p)
 	buf.Write([]byte{0, 0, 0, 0})
-	buf.Write(fakePacket)
+	buf.Write(pseudoPacket)
 	msg := buf.Bytes()
 
 	for {

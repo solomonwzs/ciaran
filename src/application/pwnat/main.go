@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	_FAKE_ICMP_BYTES []byte
+	_PSEUDO_ICMP_BYTES []byte
 )
 
 func init() {
@@ -25,7 +25,7 @@ func init() {
 			SeqNum: 789,
 		},
 	}
-	_FAKE_ICMP_BYTES, _ = icmp.Marshal()
+	_PSEUDO_ICMP_BYTES, _ = icmp.Marshal()
 }
 
 func Main() {
